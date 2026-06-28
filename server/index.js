@@ -25,6 +25,8 @@ const handle = (fn) => async (req, res) => {
 
 app.get('/api/health', handle(async () => ({ ok: true, ts: Date.now() })))
 
+app.get('/api/me', handle(async () => ({ login: await github.currentUser() })))
+
 app.get('/api/repos', handle((req) =>
   github.listRepos({ limit: Number(req.query.limit) || 100 })))
 
@@ -62,9 +64,24 @@ app.post('/api/repos/:owner/:repo/issues/local/:id/post', handle(async (req) => 
   return { url }
 }))
 
+app.patch('/api/repos/:owner/:repo/issues/local/:id', handle(async (req) => {
+  const { title, body } = req.body || {}
+  const updated = await localIssues.update(req.params.id, { title, body })
+  if (!updated) throw new Error('local issue not found')
+  return updated
+}))
+
 app.delete('/api/repos/:owner/:repo/issues/local/:id', handle(async (req) => {
   await localIssues.remove(req.params.id)
   return { ok: true }
+}))
+
+// Edit a GitHub issue's title/body.
+app.patch('/api/repos/:owner/:repo/issues/:number', handle(async (req) => {
+  const { owner, repo, number } = req.params
+  const { title, body } = req.body || {}
+  await github.editIssue(owner, repo, number, { title, body })
+  return github.getIssue(owner, repo, number)
 }))
 
 // Detail (incl. body) for a GitHub issue.

@@ -61,9 +61,22 @@ export function listPulls(owner, repo, { limit = 100 } = {}) {
   ])
 }
 
+// The authenticated GitHub login.
+export function currentUser() {
+  return ghRaw(['api', 'user', '--jq', '.login'])
+}
+
 // Create a GitHub issue. Returns the issue URL.
 export function createIssue(owner, repo, { title, body }) {
   return ghRaw(['issue', 'create', '--repo', `${owner}/${repo}`, '--title', title, '--body', body || ''])
+}
+
+// Edit a GitHub issue's title and/or body.
+export function editIssue(owner, repo, number, { title, body }) {
+  const args = ['issue', 'edit', String(number), '--repo', `${owner}/${repo}`]
+  if (title != null) args.push('--title', title)
+  if (body != null) args.push('--body', body)
+  return ghRaw(args)
 }
 
 // Full detail (incl. body) for a single issue — used to brief the agent.
@@ -71,7 +84,7 @@ export function getIssue(owner, repo, number) {
   return gh([
     'issue', 'view', String(number),
     '--repo', `${owner}/${repo}`,
-    '--json', 'number,title,body,labels,url',
+    '--json', 'number,title,body,labels,url,author',
   ])
 }
 

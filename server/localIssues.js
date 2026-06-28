@@ -44,6 +44,16 @@ export async function create(repo, { title, body }) {
   return shape(item)
 }
 
+export async function update(id, { title, body }) {
+  await load()
+  const i = items.find((x) => x.id === id)
+  if (!i) return null
+  if (title != null) i.title = title
+  if (body != null) i.body = body
+  await persist()
+  return shape(i)
+}
+
 export async function remove(id) {
   await load()
   items = items.filter((i) => i.id !== id)

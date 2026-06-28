@@ -50,12 +50,15 @@ export default function App() {
   const [selectedPr, setSelectedPr] = useState(null) // { repo, pr }
   const [selectedChange, setSelectedChange] = useState(null) // taskId of a changes_ready task
   const [selectedIssue, setSelectedIssue] = useState(null) // { repo, issue }
+  const [me, setMe] = useState(null) // authenticated GitHub login
 
   // Tasks keyed by id, kept live via SSE.
   const [tasks, setTasks] = useState({})
   const [selectedTask, setSelectedTask] = useState(DEMO ? 'twait' : null)
 
   useEffect(() => {
+    api('/api/me').then((r) => setMe(r.login)).catch(() => {})
+
     api('/api/repos')
       .then((data) => {
         const sorted = [...data].sort((a, b) => new Date(b.updatedAt) - new Date(a.updatedAt))
@@ -204,7 +207,7 @@ export default function App() {
           {view === 'agents' ? (
             <AgentsPanel tasks={taskList} selected={selectedTask} setSelected={setSelectedTask} onOpenChanges={openChanges} />
           ) : view === 'issue' && selectedIssue ? (
-            <IssueDetail repo={selectedIssue.repo} issue={selectedIssue.issue}
+            <IssueDetail repo={selectedIssue.repo} issue={selectedIssue.issue} me={me}
               task={taskList.find((t) => `${t.owner}/${t.repo}` === selectedIssue.repo.nameWithOwner && (t.kind || 'plan') !== 'review' && t.issueNumber == (selectedIssue.issue.number ?? selectedIssue.issue.id))}
               onDispatch={dispatch} onOpenTask={openTask} onBack={() => setView('repo')} />
           ) : view === 'changes' && selectedChange ? (
@@ -407,20 +410,49 @@ function NewIssueForm({ repo, onClose, onCreated }) {
   )
 }
 
-function IssueDetail({ repo, issue, task, onDispatch, onOpenTask, onBack }) {
+function IssueDetail({ repo, issue, me, task, onDispatch, onOpenTask, onBack }) {
   const [owner, name] = repo.nameWithOwner.split('/')
   const [model, setModel] = useState('opus')
   const [full, setFull] = useState(issue.local ? issue : null)
   const [error, setError] = useState(null)
   const [acting, setActing] = useState(false)
+  const [editing, setEditing] = useState(false)
+  const [eTitle, setETitle] = useState('')
+  const [eBody, setEBody] = useState('')
 
   useEffect(() => {
+    setEditing(false)
     if (issue.local) { setFull(issue); return }
     setFull(null); setError(null)
     api(`/api/repos/${owner}/${name}/issues/${issue.number}`).then(setFull).catch((e) => setError(e.message))
   }, [repo.nameWithOwner, issue.number, issue.id])
 
   const inflight = task && ACTIVE.has(task.status)
+  // Editable if it's a local draft, a repo you own, or an issue you authored.
+  const authorLogin = full?.author?.login || issue.author?.login
+  const editable = issue.local || (me && (me === owner || me === authorLogin))
+  const title = full?.title ?? issue.title
+
+  function startEdit() {
+    setETitle(title)
+    setEBody(full?.body || '')
+    setEditing(true)
+  }
+  async function saveEdit() {
+    setActing(true)
+    try {
+      const path = issue.local
+        ? `/api/repos/${owner}/${name}/issues/local/${issue.id}`
+        : `/api/repos/${owner}/${name}/issues/${issue.number}`
+      const updated = await api(path, {
+        method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ title: eTitle.trim(), body: eBody }),
+      })
+      setFull(updated)
+      setEditing(false)
+    } catch (e) { alert('Save failed: ' + e.message) }
+    finally { setActing(false) }
+  }
 
   async function postToGitHub() {
     setActing(true)
@@ -435,30 +467,44 @@ function IssueDetail({ repo, issue, task, onDispatch, onOpenTask, onBack }) {
   return (
     <>
       <div className="main-head pr-head">
-        <div>
+        <div className="issue-head-main">
           <button className="link-btn" onClick={onBack}>← back</button>
-          <h1>
-            {issue.local ? <span className="badge local-badge">draft</span> : <a href={issue.url} target="_blank" rel="noreferrer">#{issue.number}</a>}
-            {' '}{issue.title}
-          </h1>
+          {editing ? (
+            <input className="ni-title issue-edit-title" value={eTitle} autoFocus onChange={(e) => setETitle(e.target.value)} />
+          ) : (
+            <h1>
+              {issue.local ? <span className="badge local-badge">draft</span> : <a href={issue.url} target="_blank" rel="noreferrer">#{issue.number}</a>}
+              {' '}{title}
+            </h1>
+          )}
         </div>
         <div className="agent-actions">
-          {issue.local && <button className="cancel" onClick={del}>Delete</button>}
-          {issue.local && <button className="dispatch" disabled={acting} onClick={postToGitHub}>{acting ? '…' : '🐙 Post to GitHub'}</button>}
-          {inflight ? (
-            <button className="approve-btn" onClick={() => onOpenTask(task.id)}>👁 View run →</button>
+          {editing ? (
+            <>
+              <button className="link-btn" onClick={() => setEditing(false)}>Cancel</button>
+              <button className="approve-btn" disabled={acting || !eTitle.trim()} onClick={saveEdit}>{acting ? 'Saving…' : '💾 Save'}</button>
+            </>
           ) : (
             <>
-              <select className="model-select" value={model} onChange={(e) => setModel(e.target.value)} title="Model">
-                <option value="opus">Opus</option><option value="sonnet">Sonnet</option><option value="haiku">Haiku</option>
-              </select>
-              <button className="approve-btn" onClick={() => onDispatch(repo, issue, model)}>📋 Plan</button>
+              {editable && <button className="dispatch" onClick={startEdit}>✎ Edit</button>}
+              {issue.local && <button className="cancel" onClick={del}>Delete</button>}
+              {issue.local && <button className="dispatch" disabled={acting} onClick={postToGitHub}>{acting ? '…' : '🐙 Post to GitHub'}</button>}
+              {inflight ? (
+                <button className="approve-btn" onClick={() => onOpenTask(task.id)}>👁 View run →</button>
+              ) : (
+                <>
+                  <select className="model-select" value={model} onChange={(e) => setModel(e.target.value)} title="Model">
+                    <option value="opus">Opus</option><option value="sonnet">Sonnet</option><option value="haiku">Haiku</option>
+                  </select>
+                  <button className="approve-btn" onClick={() => onDispatch(repo, issue, model)}>📋 Plan</button>
+                </>
+              )}
             </>
           )}
         </div>
       </div>
 
-      {full?.labels?.length ? (
+      {!editing && full?.labels?.length ? (
         <div className="issue-labels">{full.labels.map((l) => (
           <span key={l.name} className="label" style={{ '--c': `#${l.color || '888'}` }}>{l.name}</span>
         ))}</div>
@@ -467,7 +513,9 @@ function IssueDetail({ repo, issue, task, onDispatch, onOpenTask, onBack }) {
       <div className="issue-body">
         {error && <div className="error pad">⚠ {error}</div>}
         {full === null && !error && <div className="muted pad">Loading…</div>}
-        {full && <pre className="issue-md">{full.body || '(no description)'}</pre>}
+        {editing
+          ? <textarea className="ni-body issue-edit-body" value={eBody} placeholder="Description (markdown)…" onChange={(e) => setEBody(e.target.value)} />
+          : full && <pre className="issue-md">{full.body || '(no description)'}</pre>}
       </div>
     </>
   )

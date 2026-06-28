@@ -162,6 +162,11 @@ export const changeTask = {
 }
 
 export function demoApi(path, opts) {
+  if (path === '/api/me') return Promise.resolve({ login: 'acme' })
+  if (/\/issues\//.test(path) && opts?.method === 'PATCH') {
+    const b = opts.body ? JSON.parse(opts.body) : {}
+    return Promise.resolve({ number: null, local: true, title: b.title, body: b.body, labels: [] })
+  }
   if (/\/issues\/local/.test(path) && opts?.method === 'POST') return Promise.resolve({ id: 'Ldemo', local: true, title: 'Draft', body: '' })
   const detail = path.match(/\/issues\/(\d+)$/)
   if (detail) {
