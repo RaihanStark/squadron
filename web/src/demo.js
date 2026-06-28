@@ -40,7 +40,7 @@ export const issuesByRepo = {
 
 export const pullsByRepo = {
   'acme/financy': [
-    { number: 40, title: 'Release to Flathub', labels: [L('packaging', '0e8a16')], isDraft: false, reviewDecision: 'REVIEW_REQUIRED', additions: 213, deletions: 18, updatedAt: ago(20), url: '#', statusCheckRollup: [{ status: 'COMPLETED', conclusion: 'SUCCESS', name: 'build' }, { status: 'COMPLETED', conclusion: 'SUCCESS', name: 'test' }] },
+    { number: 40, title: 'Release to Flathub', labels: [L('packaging', '0e8a16')], isDraft: false, reviewDecision: 'REVIEW_REQUIRED', additions: 213, deletions: 18, updatedAt: ago(20), url: '#', statusCheckRollup: [{ status: 'COMPLETED', conclusion: 'SUCCESS', name: 'build', detailsUrl: '#' }, { status: 'COMPLETED', conclusion: 'FAILURE', name: 'test', detailsUrl: '#' }, { status: 'IN_PROGRESS', name: 'lint', detailsUrl: '#' }] },
   ],
   'acme/timetracky': [],
 }

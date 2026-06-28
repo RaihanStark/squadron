@@ -175,6 +175,17 @@ body {
 }
 .merge-btn:disabled { background: var(--panel-2); color: var(--muted); cursor: not-allowed; }
 
+.ci-checks { margin: 12px 16px 0; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
+.ci-check { display: flex; align-items: center; gap: 8px; padding: 6px 12px; font-size: 12.5px; border-top: 1px solid var(--border); }
+.ci-check:first-child { border-top: none; }
+.ci-check-icon { width: 14px; text-align: center; font-weight: 700; }
+.ci-check.ci-pass .ci-check-icon { color: var(--green); }
+.ci-check.ci-fail .ci-check-icon { color: var(--red); }
+.ci-check.ci-pending .ci-check-icon { color: var(--accent); }
+.ci-check-name { color: var(--text); }
+.ci-check-name a { color: var(--accent); text-decoration: none; }
+.ci-check-desc { color: var(--muted); margin-left: auto; text-transform: capitalize; }
+
 .review-summary {
   margin: 12px 16px 0; padding: 10px 14px; border-radius: 8px;
   background: rgba(240, 165, 0, 0.08); border: 1px solid var(--accent-dim); color: var(--text); font-size: 13px;

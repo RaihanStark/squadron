@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { api } from '../api.js'
 import { parseDiff, filePath } from '../diff.js'
-import { ciState, CI_LABEL } from '../ci.js'
+import { ciState, ciChecks, CI_LABEL, CI_CHECK_SYMBOL } from '../ci.js'
 import DiffFile from './DiffFile.jsx'
 
 export default function PrDetail({ repo, pr, task, onReview, onBack }) {
@@ -46,16 +46,19 @@ export default function PrDetail({ repo, pr, task, onReview, onBack }) {
     finally { setMerging(false) }
   }
 
-  const ci = ciState(detail?.statusCheckRollup ?? pr.statusCheckRollup)
+  const rollup = detail?.statusCheckRollup ?? pr.statusCheckRollup
+  const ci = ciState(rollup)
+  const checks = ciChecks(rollup)
   const isDraft = detail?.isDraft ?? pr.isDraft
   const mergeable = detail?.mergeable
-  const canMerge = ci === 'success' && mergeable === 'MERGEABLE' && !isDraft
+  // No checks at all is allowed to merge; only an actual failure/pending blocks.
+  const ciOk = ci === 'success' || ci === 'none'
+  const canMerge = ciOk && mergeable === 'MERGEABLE' && !isDraft
   const mergeReason =
     !detail ? 'Checking merge status…'
     : isDraft ? 'PR is a draft'
     : ci === 'failure' ? 'CI is failing'
     : ci === 'pending' ? 'CI is still running'
-    : ci === 'none' ? 'No CI checks have run'
     : mergeable === 'CONFLICTING' ? 'PR has merge conflicts'
     : mergeable !== 'MERGEABLE' ? 'PR is not mergeable'
     : `Merge this PR (${mergeMethod})`
@@ -105,6 +108,20 @@ export default function PrDetail({ repo, pr, task, onReview, onBack }) {
           )}
         </div>
       </div>
+
+      {checks.length > 0 && (
+        <div className="ci-checks">
+          {checks.map((c, i) => (
+            <div key={i} className={`ci-check ${CI_LABEL[c.state].cls}`}>
+              <span className="ci-check-icon">{CI_CHECK_SYMBOL[c.state]}</span>
+              <span className="ci-check-name">
+                {c.link ? <a href={c.link} target="_blank" rel="noreferrer">{c.name}</a> : c.name}
+              </span>
+              {c.description && <span className="ci-check-desc">{c.description}</span>}
+            </div>
+          ))}
+        </div>
+      )}
 
       {reviewed && task.review && <div className="review-summary">🤖 {task.review}</div>}
       {reviewed && !findings.length && <div className="review-summary ok">🤖 No issues found.</div>}

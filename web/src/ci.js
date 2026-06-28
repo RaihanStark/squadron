@@ -26,6 +26,31 @@ export function ciState(rollup) {
   return 'success'
 }
 
+// Normalize each rollup entry into a flat { name, state, description, link } so
+// the PR detail view can list every check and show which one failed.
+export function ciChecks(rollup) {
+  if (!Array.isArray(rollup)) return []
+  return rollup.map((c) => {
+    if (c.state != null) {
+      // StatusContext (commit status)
+      const state = FAIL_STATES.has(c.state) ? 'failure'
+        : (c.state === 'PENDING' || c.state === 'EXPECTED') ? 'pending'
+        : 'success'
+      return { name: c.context || 'status', state, description: prettify(c.state), link: c.targetUrl || '' }
+    }
+    // CheckRun
+    const state = c.status !== 'COMPLETED' ? 'pending'
+      : FAIL_CONCLUSIONS.has(c.conclusion) ? 'failure'
+      : 'success'
+    const raw = c.status !== 'COMPLETED' ? c.status : c.conclusion
+    return { name: c.name || c.workflowName || 'check', state, description: prettify(raw), link: c.detailsUrl || '' }
+  })
+}
+
+function prettify(s) {
+  return (s || '').toLowerCase().replace(/_/g, ' ')
+}
+
 // Display metadata for each CI state (badge styling + labels).
 export const CI_LABEL = {
   success: { cls: 'ci-pass', text: '✓ CI passing', short: '✓ CI' },
@@ -33,3 +58,6 @@ export const CI_LABEL = {
   pending: { cls: 'ci-pending', text: '… CI pending', short: '… CI' },
   none: { cls: 'ci-none', text: 'no checks', short: '— CI' },
 }
+
+// Per-check icon for the detail breakdown.
+export const CI_CHECK_SYMBOL = { success: '✓', failure: '✗', pending: '…' }
