@@ -11,6 +11,14 @@ to do, babysitting the change, pushing the PR. Squadron puts every repo on one s
 browse the backlog, dispatch an autonomous agent at an issue, watch it work live, and
 get a pull request back. One operator, many projects.
 
+> 🚧 **Experimental — run it in a VM.** Squadron is an experimental project and runs
+> Claude agents with **bypassed permissions** (`bypassPermissions`) during autonomous
+> execution — agents read, write, and run commands **without per-action approval**. The
+> only guardrail is a `PreToolUse` guard that confines each agent to its git worktree (see
+> [How it works](#how-it-works)). That confinement is best-effort, not a security sandbox.
+> **Run Squadron inside a virtual machine or other isolated environment** so an agent can't
+> touch anything you care about. Use at your own risk.
+
 > ⚠️ Demo data below. The screenshots use a fictional `acme/*` fleet via demo mode
 > (`?demo`) — your real repos never leave your machine.
 
@@ -98,7 +106,10 @@ whole review to GitHub with one click.
 - **Isolation:** every task runs on its own branch in its own git worktree (under
   `~/.squadron`, outside your projects), so multiple agents never collide — even on the
   same repo. A `PreToolUse` guard **confines each agent to its worktree**: any attempt to
-  read, write, or `cd` outside it is blocked, even during autonomous execution.
+  read, write, or `cd` outside it is blocked, even during autonomous execution. Autonomous
+  runs use Claude's `bypassPermissions` mode (no per-action approval), so this guard is the
+  only thing standing between an agent and the rest of your machine — **run Squadron in a VM**
+  (see the warning at the top).
 - **Auth:** agents use your existing Claude Code login; GitHub flows through `gh`. No
   tokens to manage.
 - **Desktop-ready:** the backend is structured to drop into an Electron main process
@@ -115,7 +126,7 @@ whole review to GitHub with one click.
 Grab the latest **`.rpm`** from [Releases](https://github.com/RaihanStark/squadron/releases) and install it:
 
 ```bash
-sudo dnf install ./Squadron-0.1.0.x86_64.rpm   # Fedora/RHEL
+sudo dnf install ./Squadron-0.2.0.x86_64.rpm   # Fedora/RHEL
 # or: sudo rpm -i ./Squadron-*.rpm
 ```
 
