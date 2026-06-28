@@ -220,6 +220,9 @@ export function cancel(taskId) {
   questions.clear(taskId)
   const ctx = sessions.get(taskId)
   if (!ctx) return false
+  // Flip out of 'planning' first so the trailing 'result' from interrupting the
+  // session is ignored by onPlanMessage (otherwise it resets status to 'planned').
+  ctx.phase = 'cancelled'
   ctx.ac?.abort()
   ctx.handle?.interrupt()
   ctx.handle?.close()
