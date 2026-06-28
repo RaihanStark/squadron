@@ -106,11 +106,24 @@ whole review to GitHub with one click.
 - [`gh`](https://cli.github.com/) — authenticated (`gh auth status`)
 - A working Claude Code login on the machine
 
-## Run
+## Install (desktop app)
+
+Grab the latest **`.rpm`** from [Releases](https://github.com/RaihanStark/squadron/releases) and install it:
+
+```bash
+sudo dnf install ./Squadron-0.1.0.x86_64.rpm   # Fedora/RHEL
+# or: sudo rpm -i ./Squadron-*.rpm
+```
+
+Then launch **Squadron** from your app menu. It still needs `gh` (authenticated) and a
+Claude Code login on the machine. Releases are built from source by GitHub Actions.
+
+## Run from source (dev)
 
 ```bash
 npm run setup   # install root + web deps
 npm run dev     # backend on :5174, cockpit on :5173
+npm run electron  # or run it as the desktop app (after `npm run build:web`)
 ```
 
 Open **http://localhost:5173**. To preview with demo data (no real repos touched):

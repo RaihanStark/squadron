@@ -1,6 +1,8 @@
 // Squadron backend. In dev this runs standalone and Vite proxies /api to it.
 // Later, this same module becomes the Electron main process.
 import express from 'express'
+import path from 'node:path'
+import { fileURLToPath } from 'node:url'
 import * as github from './github.js'
 import * as runner from './runner.js'
 import * as questions from './questions.js'
@@ -191,6 +193,22 @@ app.get('/api/stream', (req, res) => {
   req.on('close', () => { clearInterval(ping); bus.off('task', onTask) })
 })
 
-app.listen(PORT, () => {
-  console.log(`\n  🛩  Squadron server ready → http://localhost:${PORT}\n`)
+// In the packaged (Electron) app, serve the built frontend from the same origin
+// so /api calls need no proxy. SQUADRON_SERVE_WEB is set by the Electron main.
+if (process.env.SQUADRON_SERVE_WEB) {
+  const __dirname = path.dirname(fileURLToPath(import.meta.url))
+  const webDist = path.join(__dirname, '..', 'web', 'dist')
+  app.use(express.static(webDist))
+  app.get('*', (req, res, next) => {
+    if (req.path.startsWith('/api')) return next()
+    res.sendFile(path.join(webDist, 'index.html'))
+  })
+}
+
+// Resolves once the server is listening (Electron waits on this before opening the window).
+export const started = new Promise((resolve) => {
+  app.listen(PORT, () => {
+    console.log(`\n  🛩  Squadron server ready → http://localhost:${PORT}\n`)
+    resolve(PORT)
+  })
 })
