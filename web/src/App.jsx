@@ -1,57 +1,23 @@
-import { useEffect, useRef, useState, Fragment } from 'react'
-import { demoApi } from './demo.js'
-import { parseDiff, filePath } from './diff.js'
-import { parseAnsi } from './ansi.js'
-
-const PARAMS = new URLSearchParams(typeof location !== 'undefined' ? location.search : '')
-const DEMO = PARAMS.has('demo')
-
-const api = (path, opts) => {
-  if (DEMO) return demoApi(path, opts)
-  return fetch(path, opts).then((r) => {
-    if (!r.ok) return r.json().then((e) => { throw new Error(e.error || r.statusText) })
-    return r.json()
-  })
-}
-
-function timeAgo(iso) {
-  if (!iso) return ''
-  const s = (Date.now() - new Date(iso)) / 1000
-  for (const [label, secs] of [['y', 31536000], ['mo', 2592000], ['d', 86400], ['h', 3600], ['m', 60]]) {
-    const v = Math.floor(s / secs)
-    if (v >= 1) return `${v}${label} ago`
-  }
-  return 'just now'
-}
-
-const ACTIVE = new Set(['queued', 'preparing', 'planning', 'planned', 'running', 'waiting', 'committing', 'changes_ready', 'pushing', 'opening_pr', 'reviewing', 'reviewed', 'posting'])
-const NEEDS_YOU = new Set(['planned', 'waiting', 'reviewed', 'changes_ready'])
-// Statuses where the agent is actively chewing (so the UI shows a live "working"
-// indicator) — excludes the awaiting-you states (planned/reviewed/waiting).
-const WORKING_LABEL = {
-  queued: 'queued…', preparing: 'preparing…', planning: 'planner thinking…',
-  running: 'agent working…', reviewing: 'reviewing the diff…', committing: 'committing…',
-  pushing: 'pushing…', opening_pr: 'opening PR…', posting: 'posting…',
-}
-const STATUS_LABEL = {
-  queued: 'queued', preparing: 'preparing', planning: 'planning', planned: 'plan ready',
-  running: 'running', waiting: 'needs you', committing: 'committing',
-  changes_ready: 'changes ready', pushing: 'pushing',
-  opening_pr: 'opening PR', pr_open: 'PR open', no_changes: 'no changes',
-  reviewing: 'reviewing', reviewed: 'review ready', posting: 'posting', review_posted: 'review posted',
-  cancelled: 'cancelled', error: 'error', interrupted: 'interrupted',
-}
+import { useEffect, useState } from 'react'
+import { api, DEMO, PARAMS } from './api.js'
+import { ACTIVE, NEEDS_YOU } from './constants.js'
+import Sidebar from './components/Sidebar.jsx'
+import RepoView from './components/RepoView.jsx'
+import AgentsPanel from './components/AgentsPanel.jsx'
+import IssueDetail from './components/IssueDetail.jsx'
+import ChangesDetail from './components/ChangesDetail.jsx'
+import PrDetail from './components/PrDetail.jsx'
 
 export default function App() {
   const [repos, setRepos] = useState([])
   const [reposError, setReposError] = useState(null)
   const [active, setActive] = useState(null)
   const [tab, setTab] = useState('backlog')
-  const [view, setView] = useState(PARAMS.get('view') === 'agents' ? 'agents' : 'repo') // 'repo' | 'agents' | 'pr'
-  const [selectedPr, setSelectedPr] = useState(null) // { repo, pr }
-  const [selectedChange, setSelectedChange] = useState(null) // taskId of a changes_ready task
-  const [selectedIssue, setSelectedIssue] = useState(null) // { repo, issue }
-  const [me, setMe] = useState(null) // authenticated GitHub login
+  const [view, setView] = useState(PARAMS.get('view') === 'agents' ? 'agents' : 'repo') // 'repo' | 'agents' | 'pr' | 'issue' | 'changes'
+  const [selectedPr, setSelectedPr] = useState(null)
+  const [selectedChange, setSelectedChange] = useState(null)
+  const [selectedIssue, setSelectedIssue] = useState(null)
+  const [me, setMe] = useState(null)
 
   // Tasks keyed by id, kept live via SSE.
   const [tasks, setTasks] = useState({})
@@ -94,12 +60,8 @@ export default function App() {
       const payload = JSON.parse(ev.data)
       setTasks((prev) => {
         const cur = prev[payload.id] || { id: payload.id, events: [] }
-        if (payload.type === 'task') {
-          return { ...prev, [payload.id]: { ...cur, ...payload.task, events: cur.events || [] } }
-        }
-        if (payload.type === 'event') {
-          return { ...prev, [payload.id]: { ...cur, events: [...(cur.events || []), payload.event] } }
-        }
+        if (payload.type === 'task') return { ...prev, [payload.id]: { ...cur, ...payload.task, events: cur.events || [] } }
+        if (payload.type === 'event') return { ...prev, [payload.id]: { ...cur, events: [...(cur.events || []), payload.event] } }
         return prev
       })
     }
@@ -115,8 +77,7 @@ export default function App() {
     const [owner, repo] = repoObj.nameWithOwner.split('/')
     try {
       const task = await api(`/api/repos/${owner}/${repo}/plan`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           issueNumber: issue.number ?? issue.id,
           issueTitle: issue.title,
@@ -129,46 +90,29 @@ export default function App() {
       setTasks((prev) => ({ ...prev, [task.id]: { ...(prev[task.id] || {}), ...task, events: prev[task.id]?.events || [] } }))
       setSelectedTask(task.id)
       setView('agents')
-    } catch (e) {
-      alert('Plan failed: ' + e.message)
-    }
+    } catch (e) { alert('Plan failed: ' + e.message) }
   }
 
   async function review(repoObj, pr, model) {
     const [owner, repo] = repoObj.nameWithOwner.split('/')
     try {
       const task = await api(`/api/repos/${owner}/${repo}/review`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ prNumber: pr.number, prTitle: pr.title, model }),
       })
       setTasks((prev) => ({ ...prev, [task.id]: { ...(prev[task.id] || {}), ...task, events: prev[task.id]?.events || [] } }))
       setSelectedTask(task.id)
       setView('agents')
-    } catch (e) {
-      alert('Review failed: ' + e.message)
-    }
+    } catch (e) { alert('Review failed: ' + e.message) }
   }
 
-  function openTask(taskId) {
-    setSelectedTask(taskId)
-    setView('agents')
-  }
+  const openTask = (taskId) => { setSelectedTask(taskId); setView('agents') }
+  const openPr = (repoObj, pr) => { setSelectedPr({ repo: repoObj, pr }); setView('pr') }
+  const openChanges = (taskId) => { setSelectedChange(taskId); setView('changes') }
+  const openIssue = (repoObj, issue) => { setSelectedIssue({ repo: repoObj, issue }); setView('issue') }
+  const backToRepo = () => setView('repo')
 
-  function openPr(repoObj, pr) {
-    setSelectedPr({ repo: repoObj, pr })
-    setView('pr')
-  }
-
-  function openChanges(taskId) {
-    setSelectedChange(taskId)
-    setView('changes')
-  }
-
-  function openIssue(repoObj, issue) {
-    setSelectedIssue({ repo: repoObj, issue })
-    setView('issue')
-  }
+  const findTask = (pred) => taskList.find(pred)
 
   return (
     <div className="app">
@@ -180,814 +124,34 @@ export default function App() {
           onClick={() => setView(view === 'agents' ? 'repo' : 'agents')}
         >
           ⚡ Agents{activeCount ? ` · ${activeCount} active` : ''}{waitingCount ? ` · ${waitingCount} needs you` : ''}
-
         </button>
       </header>
 
       <div className="body">
-        <aside className="sidebar">
-          <div className="sidebar-head">REPOS {repos.length ? `· ${repos.length}` : ''}</div>
-          {reposError && <div className="error">⚠ {reposError}</div>}
-          {!reposError && !repos.length && <div className="muted">Loading fleet…</div>}
-          {repos.map((r) => {
-            const running = taskList.filter((t) => `${t.owner}/${t.repo}` === r.nameWithOwner && ACTIVE.has(t.status)).length
-            return (
-              <button
-                key={r.nameWithOwner}
-                className={`repo ${active === r.nameWithOwner && view === 'repo' ? 'active' : ''}`}
-                onClick={() => { setActive(r.nameWithOwner); setView('repo') }}
-              >
-                <span className="repo-name">{r.name} {running ? <span className="dot" title={`${running} agent(s) running`} /> : null}</span>
-                <span className="repo-meta">{r.isPrivate ? '🔒' : ''} {timeAgo(r.updatedAt)}</span>
-              </button>
-            )
-          })}
-        </aside>
+        <Sidebar repos={repos} reposError={reposError} active={active} view={view} taskList={taskList}
+          onSelect={(name) => { setActive(name); setView('repo') }} />
 
         <main className="main">
           {view === 'agents' ? (
             <AgentsPanel tasks={taskList} selected={selectedTask} setSelected={setSelectedTask} onOpenChanges={openChanges} />
           ) : view === 'issue' && selectedIssue ? (
             <IssueDetail repo={selectedIssue.repo} issue={selectedIssue.issue} me={me}
-              task={taskList.find((t) => `${t.owner}/${t.repo}` === selectedIssue.repo.nameWithOwner && (t.kind || 'plan') !== 'review' && t.issueNumber == (selectedIssue.issue.number ?? selectedIssue.issue.id))}
-              onDispatch={dispatch} onOpenTask={openTask} onBack={() => setView('repo')} />
+              task={findTask((t) => `${t.owner}/${t.repo}` === selectedIssue.repo.nameWithOwner && (t.kind || 'plan') !== 'review' && t.issueNumber == (selectedIssue.issue.number ?? selectedIssue.issue.id))}
+              onDispatch={dispatch} onOpenTask={openTask} onBack={backToRepo} />
           ) : view === 'changes' && selectedChange ? (
-            <ChangesDetail task={taskList.find((t) => t.id === selectedChange)} onBack={() => setView('repo')} />
+            <ChangesDetail task={findTask((t) => t.id === selectedChange)} onBack={backToRepo} />
           ) : view === 'pr' && selectedPr ? (
-            <PrDetail
-              repo={selectedPr.repo}
-              pr={selectedPr.pr}
-              task={taskList.find((t) => `${t.owner}/${t.repo}` === selectedPr.repo.nameWithOwner && t.issueNumber === selectedPr.pr.number && (t.kind || 'plan') === 'review')}
-              onReview={review}
-              onBack={() => setView('repo')}
-            />
+            <PrDetail repo={selectedPr.repo} pr={selectedPr.pr}
+              task={findTask((t) => `${t.owner}/${t.repo}` === selectedPr.repo.nameWithOwner && t.issueNumber === selectedPr.pr.number && (t.kind || 'plan') === 'review')}
+              onReview={review} onBack={backToRepo} />
           ) : activeRepo ? (
-            <RepoView key={active} repo={activeRepo} tab={tab} setTab={setTab} onDispatch={dispatch} onReview={review} onOpenTask={openTask} onOpenPr={openPr} onOpenChanges={openChanges} onOpenIssue={openIssue} tasks={taskList} />
+            <RepoView key={active} repo={activeRepo} tab={tab} setTab={setTab} onDispatch={dispatch} onReview={review}
+              onOpenTask={openTask} onOpenPr={openPr} onOpenChanges={openChanges} onOpenIssue={openIssue} tasks={taskList} />
           ) : (
             <div className="empty">Select a repo to begin.</div>
           )}
         </main>
       </div>
     </div>
-  )
-}
-
-function RepoView({ repo, tab, setTab, onDispatch, onReview, onOpenTask, onOpenPr, onOpenChanges, onOpenIssue, tasks }) {
-  const [owner, name] = repo.nameWithOwner.split('/')
-  const [issues, setIssues] = useState(null)
-  const [pulls, setPulls] = useState(null)
-  const [error, setError] = useState(null)
-  const [creating, setCreating] = useState(false)
-
-  const loadIssues = () => api(`/api/repos/${owner}/${name}/issues`).then(setIssues).catch((e) => setError(e.message))
-
-  useEffect(() => {
-    setIssues(null); setPulls(null); setError(null); setCreating(false)
-    loadIssues()
-    api(`/api/repos/${owner}/${name}/pulls`).then(setPulls).catch((e) => setError(e.message))
-  }, [repo.nameWithOwner])
-
-  // Latest issue task (plan/execute) per issue, so the backlog shows live status.
-  const taskByIssue = {}
-  for (const t of tasks) {
-    if (`${t.owner}/${t.repo}` === repo.nameWithOwner && (t.kind || 'plan') !== 'review') taskByIssue[t.issueNumber] = t
-  }
-
-  // "Ready to Review" = local agent changes staged in a worktree — kept here
-  // through revisions (running/waiting) until pushed or discarded.
-  const changeTasks = tasks.filter((t) =>
-    `${t.owner}/${t.repo}` === repo.nameWithOwner && (t.kind || 'plan') !== 'review'
-    && t.staged && !['pr_open', 'cancelled'].includes(t.status))
-
-  return (
-    <>
-      <div className="main-head">
-        <h1>{repo.nameWithOwner}</h1>
-        <div className="tabs">
-          <button className={tab === 'backlog' ? 'on' : ''} onClick={() => setTab('backlog')}>
-            Backlog {issues ? `· ${issues.length}` : ''}
-          </button>
-          <button className={`${tab === 'review' ? 'on' : ''} ${changeTasks.length ? 'has-ready' : ''}`} onClick={() => setTab('review')}>
-            Ready to Review · {changeTasks.length}
-          </button>
-          <button className={tab === 'prs' ? 'on' : ''} onClick={() => setTab('prs')}>
-            Pull Requests {pulls ? `· ${pulls.length}` : ''}
-          </button>
-        </div>
-      </div>
-
-      {error && <div className="error pad">⚠ {error}</div>}
-
-      <div className="list">
-        {tab === 'backlog' && (
-          <>
-            {creating
-              ? <NewIssueForm repo={repo} onClose={() => setCreating(false)} onCreated={() => { setCreating(false); loadIssues() }} />
-              : <button className="new-issue-btn" onClick={() => setCreating(true)}>+ New backlog item</button>}
-            {issues === null ? <div className="muted pad">Loading missions…</div>
-              : !issues.length ? <div className="muted pad">No open issues yet.</div>
-              : issues.map((it) => {
-                const key = it.number ?? it.id
-                return <IssueRow key={key} issue={it} task={taskByIssue[key]} onOpenTask={onOpenTask}
-                  onOpenIssue={() => onOpenIssue(repo, it)} onDispatch={(i, model) => onDispatch(repo, i, model)} />
-              })}
-          </>
-        )}
-
-        {tab === 'review' && (
-          changeTasks.length
-            ? changeTasks.map((t) => <ChangeCard key={t.id} task={t} onOpen={() => onOpenChanges(t.id)} />)
-            : <div className="muted pad">Empty — no local changes staged. Plan an issue in <strong>Backlog</strong> and approve it; the agent's changes land here (committed locally, not pushed) for you to review before opening a PR.</div>
-        )}
-
-        {tab === 'prs' && (
-          pulls === null ? <div className="muted pad">Loading sorties…</div>
-            : pulls.length
-              ? pulls.map((pr) => <PrCard key={pr.number} pr={pr} task={undefined} onOpenPr={() => onOpenPr(repo, pr)} cta="Review →" />)
-              : <div className="muted pad">No open PRs.</div>
-        )}
-      </div>
-    </>
-  )
-}
-
-function PrCard({ pr, task, onOpenPr, cta }) {
-  return (
-    <div className="card card-click" onClick={onOpenPr}>
-      <div className="card-main">
-        <span className="num">#{pr.number}</span>
-        <span className="title">{pr.title}</span>
-      </div>
-      <div className="card-meta">
-        <span className="diff add">+{pr.additions}</span>
-        <span className="diff del">−{pr.deletions}</span>
-        {pr.isDraft && <span className="badge">draft</span>}
-        {task?.findings?.length ? <span className="badge model-badge">{task.findings.length} finding(s)</span> : null}
-        {task && task.status !== 'reviewed' && <StatusBadge status={task.status} />}
-        <span className="chev">{cta}</span>
-      </div>
-    </div>
-  )
-}
-
-function IssueRow({ issue: it, task, onDispatch, onOpenTask, onOpenIssue }) {
-  const [model, setModel] = useState('opus')
-  // An in-flight task owns this issue — show its live status and a way to jump
-  // to it, rather than offering a second Plan (which the backend would dedupe).
-  const inflight = task && ACTIVE.has(task.status)
-  const verb = task?.status === 'planning' ? 'planning…'
-    : task?.status === 'planned' ? 'plan ready'
-    : task?.status === 'waiting' ? 'needs you'
-    : task?.status === 'changes_ready' ? 'changes ready'
-    : 'in progress'
-  const stop = (e) => e.stopPropagation()
-  return (
-    <div className="card card-click" onClick={onOpenIssue}>
-      <div className="card-main">
-        {it.local ? <span className="badge local-badge">draft</span> : <span className="num">#{it.number}</span>}
-        <span className="title">{it.title}</span>
-      </div>
-      <div className="card-meta">
-        {it.labels?.map((l) => (
-          <span key={l.name} className="label" style={{ '--c': `#${l.color}` }}>{l.name}</span>
-        ))}
-        <span className="muted">{it.local ? 'local draft' : `${it.comments} 💬`} · {timeAgo(it.updatedAt)}</span>
-        {task && task.status !== 'pr_open' && <StatusBadge status={task.status} />}
-        {inflight ? (
-          <button className="dispatch view-btn" onClick={(e) => { stop(e); onOpenTask(task.id) }}>
-            👁 View {verb}
-          </button>
-        ) : (
-          <span className="row-actions" onClick={stop}>
-            <select
-              className="model-select"
-              value={model}
-              onChange={(e) => setModel(e.target.value)}
-              title="Model for this plan"
-            >
-              <option value="opus">Opus</option>
-              <option value="sonnet">Sonnet</option>
-              <option value="haiku">Haiku</option>
-            </select>
-            <button className="dispatch" onClick={() => onDispatch(it, model)}>📋 Plan</button>
-          </span>
-        )}
-      </div>
-    </div>
-  )
-}
-
-function NewIssueForm({ repo, onClose, onCreated }) {
-  const [owner, name] = repo.nameWithOwner.split('/')
-  const [title, setTitle] = useState('')
-  const [body, setBody] = useState('')
-  const [busy, setBusy] = useState(false)
-
-  async function save(toGitHub) {
-    if (!title.trim()) return
-    setBusy(true)
-    try {
-      await api(`/api/repos/${owner}/${name}/issues${toGitHub ? '' : '/local'}`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ title: title.trim(), body }),
-      })
-      onCreated()
-    } catch (e) { alert('Failed: ' + e.message) }
-    finally { setBusy(false) }
-  }
-
-  return (
-    <div className="new-issue">
-      <input className="ni-title" placeholder="Title" value={title} autoFocus onChange={(e) => setTitle(e.target.value)} />
-      <textarea className="ni-body" placeholder="Description (markdown)…" value={body} onChange={(e) => setBody(e.target.value)} />
-      <div className="ni-actions">
-        <button className="link-btn" onClick={onClose}>Cancel</button>
-        <button className="dispatch" disabled={busy || !title.trim()} onClick={() => save(false)} title="Keep it in Squadron only">
-          💾 Save locally
-        </button>
-        <button className="approve-btn" disabled={busy || !title.trim()} onClick={() => save(true)} title="Create the issue on GitHub">
-          {busy ? 'Saving…' : '🐙 Create on GitHub'}
-        </button>
-      </div>
-    </div>
-  )
-}
-
-function IssueDetail({ repo, issue, me, task, onDispatch, onOpenTask, onBack }) {
-  const [owner, name] = repo.nameWithOwner.split('/')
-  const [model, setModel] = useState('opus')
-  const [full, setFull] = useState(issue.local ? issue : null)
-  const [error, setError] = useState(null)
-  const [acting, setActing] = useState(false)
-  const [editing, setEditing] = useState(false)
-  const [eTitle, setETitle] = useState('')
-  const [eBody, setEBody] = useState('')
-
-  useEffect(() => {
-    setEditing(false)
-    if (issue.local) { setFull(issue); return }
-    setFull(null); setError(null)
-    api(`/api/repos/${owner}/${name}/issues/${issue.number}`).then(setFull).catch((e) => setError(e.message))
-  }, [repo.nameWithOwner, issue.number, issue.id])
-
-  const inflight = task && ACTIVE.has(task.status)
-  // Editable if it's a local draft, a repo you own, or an issue you authored.
-  const authorLogin = full?.author?.login || issue.author?.login
-  const editable = issue.local || (me && (me === owner || me === authorLogin))
-  const title = full?.title ?? issue.title
-
-  function startEdit() {
-    setETitle(title)
-    setEBody(full?.body || '')
-    setEditing(true)
-  }
-  async function saveEdit() {
-    setActing(true)
-    try {
-      const path = issue.local
-        ? `/api/repos/${owner}/${name}/issues/local/${issue.id}`
-        : `/api/repos/${owner}/${name}/issues/${issue.number}`
-      const updated = await api(path, {
-        method: 'PATCH', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ title: eTitle.trim(), body: eBody }),
-      })
-      setFull(updated)
-      setEditing(false)
-    } catch (e) { alert('Save failed: ' + e.message) }
-    finally { setActing(false) }
-  }
-
-  async function postToGitHub() {
-    setActing(true)
-    try { const r = await api(`/api/repos/${owner}/${name}/issues/local/${issue.id}/post`, { method: 'POST' }); window.open(r.url, '_blank'); onBack() }
-    catch (e) { alert('Failed: ' + e.message) } finally { setActing(false) }
-  }
-  async function del() {
-    if (!confirm('Delete this local draft?')) return
-    try { await api(`/api/repos/${owner}/${name}/issues/local/${issue.id}`, { method: 'DELETE' }); onBack() } catch (e) { alert(e.message) }
-  }
-
-  return (
-    <>
-      <div className="main-head pr-head">
-        <div className="issue-head-main">
-          <button className="link-btn" onClick={onBack}>← back</button>
-          {editing ? (
-            <input className="ni-title issue-edit-title" value={eTitle} autoFocus onChange={(e) => setETitle(e.target.value)} />
-          ) : (
-            <h1>
-              {issue.local ? <span className="badge local-badge">draft</span> : <a href={issue.url} target="_blank" rel="noreferrer">#{issue.number}</a>}
-              {' '}{title}
-            </h1>
-          )}
-        </div>
-        <div className="agent-actions">
-          {editing ? (
-            <>
-              <button className="link-btn" onClick={() => setEditing(false)}>Cancel</button>
-              <button className="approve-btn" disabled={acting || !eTitle.trim()} onClick={saveEdit}>{acting ? 'Saving…' : '💾 Save'}</button>
-            </>
-          ) : (
-            <>
-              {editable && <button className="dispatch" onClick={startEdit}>✎ Edit</button>}
-              {issue.local && <button className="cancel" onClick={del}>Delete</button>}
-              {issue.local && <button className="dispatch" disabled={acting} onClick={postToGitHub}>{acting ? '…' : '🐙 Post to GitHub'}</button>}
-              {inflight ? (
-                <button className="approve-btn" onClick={() => onOpenTask(task.id)}>👁 View run →</button>
-              ) : (
-                <>
-                  <select className="model-select" value={model} onChange={(e) => setModel(e.target.value)} title="Model">
-                    <option value="opus">Opus</option><option value="sonnet">Sonnet</option><option value="haiku">Haiku</option>
-                  </select>
-                  <button className="approve-btn" onClick={() => onDispatch(repo, issue, model)}>📋 Plan</button>
-                </>
-              )}
-            </>
-          )}
-        </div>
-      </div>
-
-      {!editing && full?.labels?.length ? (
-        <div className="issue-labels">{full.labels.map((l) => (
-          <span key={l.name} className="label" style={{ '--c': `#${l.color || '888'}` }}>{l.name}</span>
-        ))}</div>
-      ) : null}
-
-      <div className="issue-body">
-        {error && <div className="error pad">⚠ {error}</div>}
-        {full === null && !error && <div className="muted pad">Loading…</div>}
-        {editing
-          ? <textarea className="ni-body issue-edit-body" value={eBody} placeholder="Description (markdown)…" onChange={(e) => setEBody(e.target.value)} />
-          : full && <pre className="issue-md">{full.body || '(no description)'}</pre>}
-      </div>
-    </>
-  )
-}
-
-function ChangeCard({ task, onOpen }) {
-  return (
-    <div className="card card-click" onClick={onOpen}>
-      <div className="card-main">
-        <span className="num">#{task.issueNumber}</span>
-        <span className="title">{task.issueTitle}</span>
-      </div>
-      <div className="card-meta">
-        {task.branch && <span className="badge">{task.branch}</span>}
-        {task.model && <span className="badge model-badge">{task.model}</span>}
-        <StatusBadge status={task.status} />
-        <span className="chev">Review changes →</span>
-      </div>
-    </div>
-  )
-}
-
-function ChangesDetail({ task, onBack }) {
-  const [files, setFiles] = useState(null)
-  const [error, setError] = useState(null)
-  const [pushing, setPushing] = useState(false)
-  const [preview, setPreview] = useState(null)
-  const [cmd, setCmd] = useState('')
-  const [cmdDirty, setCmdDirty] = useState(false)
-  const [chatText, setChatText] = useState('')
-  const [sending, setSending] = useState(false)
-  const [chatW, setChatW] = useState(400)
-  const [dockOpen, setDockOpen] = useState(false)
-  const logRef = useRef(null)
-  const dragging = useRef(false)
-
-  // (Re)load the diff on open and whenever a revision finishes.
-  useEffect(() => {
-    if (!task || ['pr_open', 'cancelled'].includes(task.status)) return
-    api(`/api/tasks/${task.id}/diff`).then((r) => setFiles(parseDiff(r.diff || ''))).catch((e) => setError(e.message))
-  }, [task?.id, task?.status])
-
-  useEffect(() => { if (logRef.current) logRef.current.scrollTop = logRef.current.scrollHeight }, [task?.events?.length, task?.status])
-
-  // Poll preview process state.
-  useEffect(() => {
-    if (!task) return
-    let alive = true
-    const poll = () => api(`/api/tasks/${task.id}/preview`).then((s) => { if (!alive) return; setPreview(s); setCmd((c) => (cmdDirty ? c : (s.command || ''))) }).catch(() => {})
-    poll(); const i = setInterval(poll, 1500)
-    return () => { alive = false; clearInterval(i) }
-  }, [task?.id, cmdDirty])
-
-  // Drag-to-resize the chat panel.
-  useEffect(() => {
-    const move = (e) => { if (dragging.current) setChatW(Math.max(300, Math.min(760, window.innerWidth - e.clientX))) }
-    const up = () => { dragging.current = false; document.body.style.userSelect = '' }
-    window.addEventListener('mousemove', move); window.addEventListener('mouseup', up)
-    return () => { window.removeEventListener('mousemove', move); window.removeEventListener('mouseup', up) }
-  }, [])
-
-  if (!task) return <div className="empty">These changes are no longer available.</div>
-
-  const [owner, name] = `${task.owner}/${task.repo}`.split('/')
-  const ready = task.status === 'changes_ready'
-  const revising = ['preparing', 'running', 'committing'].includes(task.status)
-  const waiting = task.status === 'waiting'
-  const pStatus = preview?.status || 'stopped'
-  const pRunning = ['preparing', 'starting', 'running'].includes(pStatus)
-
-  async function push() {
-    setPushing(true)
-    try { await api(`/api/tasks/${task.id}/push`, { method: 'POST' }); onBack() }
-    catch (e) { alert('Push failed: ' + e.message) } finally { setPushing(false) }
-  }
-  async function discard() {
-    if (!confirm('Discard these local changes? This removes the worktree.')) return
-    try { await api(`/api/tasks/${task.id}/cancel`, { method: 'POST' }); onBack() } catch (e) { alert(e.message) }
-  }
-  async function startPreview() {
-    if (cmdDirty) { await api(`/api/repos/${owner}/${name}/run-command`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ command: cmd }) }).catch(() => {}); setCmdDirty(false) }
-    setDockOpen(true)
-    await api(`/api/tasks/${task.id}/preview`, { method: 'POST' }).catch((e) => alert('Start failed: ' + e.message))
-  }
-  async function stopPreview() { await api(`/api/tasks/${task.id}/preview`, { method: 'DELETE' }).catch(() => {}) }
-  async function stopRevise() { await api(`/api/tasks/${task.id}/stop`, { method: 'POST' }).catch(() => {}) }
-  async function send() {
-    const text = chatText.trim()
-    if (!text) return
-    setSending(true)
-    try {
-      if (waiting) await api(`/api/tasks/${task.id}/answer`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text }) })
-      else await api(`/api/tasks/${task.id}/revise`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ instruction: text }) })
-      setChatText('')
-    } catch (e) { alert('Failed: ' + e.message) } finally { setSending(false) }
-  }
-
-  return (
-    <div className="ide">
-      <div className="main-head pr-head ide-head">
-        <div className="issue-head-main">
-          <button className="link-btn" onClick={onBack}>← back</button>
-          <h1>Changes for #{task.issueNumber} <span className="muted">{task.issueTitle}</span></h1>
-        </div>
-        <div className="agent-actions">
-          <StatusBadge status={task.status} />
-          {task.branch && <span className="badge">{task.branch}</span>}
-          {ready && <button className="cancel" onClick={discard}>Discard</button>}
-          {ready && <button className="approve-btn" disabled={pushing} onClick={push}>{pushing ? 'Pushing…' : '⬆ Push & Open PR'}</button>}
-          {task.prUrl && <a className="dispatch" href={task.prUrl} target="_blank" rel="noreferrer">Open PR ↗</a>}
-        </div>
-      </div>
-
-      <div className="ide-body">
-        <div className="ide-editor">
-          {task.summary && <div className="review-summary">🤖 {task.summary}</div>}
-          {error && <div className="error pad">⚠ {error}</div>}
-          {files === null && !error && <div className="muted pad">Loading changes…</div>}
-          {files && !files.length && <div className="muted pad">No changes in the working tree yet.</div>}
-          {files && files.map((f, fi) => <DiffFile key={fi} file={f} findings={[]} />)}
-        </div>
-
-        <div className="ide-resize" onMouseDown={() => { dragging.current = true; document.body.style.userSelect = 'none' }} />
-
-        <div className="ide-chat" style={{ width: chatW }}>
-          <div className="chat-head">
-            💬 Agent
-            <span className={`status status-${revising ? 'running' : waiting ? 'waiting' : 'changes_ready'}`}>{revising ? 'working…' : waiting ? 'needs you' : 'idle'}</span>
-          </div>
-          <div className="chat-log" ref={logRef}>
-            {(task.events || []).map((e, i) => <ChatLine key={i} e={e} />)}
-            {!task.events?.length && <div className="muted">Ask the agent to change anything — it revises in this worktree and the diff updates on the left.</div>}
-            {revising && <div className="log-working"><span className="dots"><span /><span /><span /></span>working…</div>}
-          </div>
-          {waiting && <div className="chat-q">❓ {task.question}</div>}
-          <div className="chat-input">
-            <textarea value={chatText} placeholder={waiting ? 'Answer the agent…' : 'Request changes — e.g. “add a test for empty rows”  (⌘/Ctrl+Enter)'}
-              onChange={(e) => setChatText(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) send() }} />
-            <div className="chat-actions">
-              {revising && !waiting && <button className="cancel" onClick={stopRevise}>■ Stop</button>}
-              <button className="approve-btn" disabled={sending || !chatText.trim() || (revising && !waiting)} onClick={send}>
-                {sending ? '…' : waiting ? 'Answer ↵' : 'Send ↵'}
-              </button>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      <div className={`ide-dock ${dockOpen ? 'open' : ''}`}>
-        <div className="dock-bar" onClick={() => setDockOpen((o) => !o)}>
-          <span className="dock-title">{dockOpen ? '▾' : '▸'} Preview &amp; Logs</span>
-          <span className="muted">{pRunning ? `running${preview?.url ? ` · ${preview.url}` : ''}` : pStatus}</span>
-        </div>
-        {dockOpen && (
-          <div className="dock-body">
-            <div className="preview-bar">
-              <input className="cmd-input" value={cmd} placeholder="run command (e.g. npm run dev, go run .)" disabled={pRunning}
-                onChange={(e) => { setCmd(e.target.value); setCmdDirty(true) }} />
-              {preview?.source && !cmdDirty && <span className="muted">{preview.source}</span>}
-              {pRunning ? <button className="cancel" onClick={stopPreview}>■ Stop</button> : <button className="approve-btn" onClick={startPreview}>▶ Start</button>}
-              {preview?.url && <a className="dispatch" href={preview.url} target="_blank" rel="noreferrer">Open {preview.url} ↗</a>}
-            </div>
-            {preview?.url && <iframe className="preview-frame" src={preview.url} title="preview" />}
-            {pRunning && !preview?.url && <div className="muted preview-note">Running — no web URL detected. A desktop app (e.g. Go/Fyne) opens its window on your machine.</div>}
-            {preview?.logs?.length ? (
-              <div className="preview-logs">
-                {preview.logs.slice(-300).map((line, i) => (
-                  <div key={i} className="log-row">{parseAnsi(line).map((s, j) => <span key={j} style={{ color: s.color || undefined, fontWeight: s.bold ? 700 : undefined }}>{s.text}</span>)}</div>
-                ))}
-              </div>
-            ) : null}
-          </div>
-        )}
-      </div>
-    </div>
-  )
-}
-
-function ChatLine({ e }) {
-  if (e.kind === 'user') return <div className="chat-msg chat-user">{e.text}</div>
-  if (e.kind === 'question') return <div className="chat-msg chat-agent">❓ {e.text}</div>
-  if (e.kind === 'answer') return <div className="chat-msg chat-user">↩︎ {e.text}</div>
-  if (e.kind === 'text') return <div className="chat-msg chat-agent">{e.text}</div>
-  if (e.kind === 'tool') return <div className="chat-tool">{e.text}</div>
-  if (e.kind === 'result') return <div className="chat-result">{e.ok ? '✅' : '⚠️'} {e.text}</div>
-  if (e.kind === 'error') return <div className="chat-err">⚠ {e.text}</div>
-  return <div className="chat-status">▸ {e.text}</div>
-}
-
-
-function PrDetail({ repo, pr, task, onReview, onBack }) {
-  const [owner, name] = repo.nameWithOwner.split('/')
-  const [files, setFiles] = useState(null)
-  const [error, setError] = useState(null)
-  const [model, setModel] = useState('opus')
-  const [posting, setPosting] = useState(false)
-
-  useEffect(() => {
-    setFiles(null); setError(null)
-    api(`/api/repos/${owner}/${name}/pulls/${pr.number}/diff`)
-      .then((r) => setFiles(parseDiff(r.diff || '')))
-      .catch((e) => setError(e.message))
-  }, [repo.nameWithOwner, pr.number])
-
-  async function postReview() {
-    if (!task) return
-    setPosting(true)
-    try { await api(`/api/tasks/${task.id}/approve`, { method: 'POST' }) }
-    catch (e) { alert('Post failed: ' + e.message) }
-    finally { setPosting(false) }
-  }
-
-  const reviewing = task && ['preparing', 'reviewing', 'posting'].includes(task.status)
-  const reviewed = task && (task.status === 'reviewed' || task.status === 'review_posted')
-  const findings = task?.findings || []
-  const findingsByFile = {}
-  for (const f of findings) (findingsByFile[f.file] ||= []).push(f)
-
-  return (
-    <>
-      <div className="main-head pr-head">
-        <div>
-          <button className="link-btn" onClick={onBack}>← back</button>
-          <h1>
-            <a href={pr.url} target="_blank" rel="noreferrer">#{pr.number}</a> {pr.title}
-            {' '}<span className="diff add">+{pr.additions}</span> <span className="diff del">−{pr.deletions}</span>
-          </h1>
-        </div>
-        <div className="agent-actions">
-          {reviewing && <span className="status status-reviewing">reviewing…</span>}
-          {task?.status === 'review_posted' && <a className="badge" href={task.prUrl} target="_blank" rel="noreferrer">✓ posted ↗</a>}
-          {task?.status === 'reviewed' && (
-            <button className="approve-btn" disabled={posting} onClick={postReview}>
-              {posting ? 'Posting…' : '✅ Post to PR'}
-            </button>
-          )}
-          {!reviewing && (
-            <>
-              <select className="model-select" value={model} onChange={(e) => setModel(e.target.value)} title="Model">
-                <option value="opus">Opus</option>
-                <option value="sonnet">Sonnet</option>
-                <option value="haiku">Haiku</option>
-              </select>
-              <button className="dispatch" onClick={() => onReview(repo, pr, model)}>🤖 {reviewed ? 'Re-review' : 'AI Review'}</button>
-            </>
-          )}
-        </div>
-      </div>
-
-      {reviewed && task.review && <div className="review-summary">🤖 {task.review}</div>}
-      {reviewed && !findings.length && <div className="review-summary ok">🤖 No issues found.</div>}
-
-      <div className="diff-view">
-        {error && <div className="error pad">⚠ {error}</div>}
-        {files === null && !error && <div className="muted pad">Loading diff…</div>}
-        {files && !files.length && <div className="muted pad">No changes to show.</div>}
-        {files && files.map((f, fi) => <DiffFile key={fi} file={f} findings={findingsByFile[filePath(f)] || []} />)}
-      </div>
-    </>
-  )
-}
-
-function DiffFile({ file, findings }) {
-  const placed = new Set()
-  return (
-    <div className="diff-file">
-      <div className="diff-file-head">{filePath(file)}</div>
-      {!file.hunks.length && <div className="diff-empty">No textual diff (binary, rename, or mode change).</div>}
-      {file.hunks.map((h, hi) => (
-        <div className="diff-hunk" key={hi}>
-          <div className="diff-line diff-hunkhead"><span className="ln" /><span className="ln" /><span className="diff-code">{h.header} {h.context}</span></div>
-          {h.lines.map((ln, li) => {
-            const here = findings.filter((fd) => fd.line != null && fd.line === ln.newNum)
-            here.forEach((fd) => placed.add(fd))
-            return (
-              <Fragment key={li}>
-                <div className={`diff-line diff-${ln.type}`}>
-                  <span className="ln">{ln.oldNum ?? ''}</span>
-                  <span className="ln">{ln.newNum ?? ''}</span>
-                  <span className="diff-code">{ln.type === 'add' ? '+' : ln.type === 'del' ? '−' : ' '}{ln.text}</span>
-                </div>
-                {here.map((fd, k) => <FindingCard key={k} f={fd} />)}
-              </Fragment>
-            )
-          })}
-        </div>
-      ))}
-      {findings.filter((fd) => !placed.has(fd)).map((fd, k) => <FindingCard key={`u${k}`} f={fd} unanchored />)}
-    </div>
-  )
-}
-
-function FindingCard({ f, unanchored }) {
-  return (
-    <div className={`finding sev-${f.severity}`}>
-      <div className="finding-head">
-        🤖 <span className="finding-sev">{f.severity}</span>
-        {unanchored && f.line ? <span className="muted"> · line {f.line} (not in shown diff)</span> : null}
-      </div>
-      <div className="finding-body">{f.body}</div>
-    </div>
-  )
-}
-
-function StatusBadge({ status }) {
-  return <span className={`status status-${status}`}>{STATUS_LABEL[status] || status}</span>
-}
-
-function AgentsPanel({ tasks, selected, setSelected, onOpenChanges }) {
-  const sel = tasks.find((t) => t.id === selected) || tasks[0]
-  return (
-    <div className="agents">
-      <div className="agents-list">
-        <div className="sidebar-head">AGENTS {tasks.length ? `· ${tasks.length}` : ''}</div>
-        {!tasks.length && <div className="muted pad">No agents dispatched yet. Hit ⚡ Dispatch on an issue.</div>}
-        {tasks.map((t) => (
-          <button
-            key={t.id}
-            className={`agent-row ${sel?.id === t.id ? 'active' : ''}`}
-            onClick={() => setSelected(t.id)}
-          >
-            <div className="agent-row-top">
-              <span className="title">{t.repo} <span className="muted">#{t.issueNumber}</span></span>
-              <StatusBadge status={t.status} />
-            </div>
-            <span className="muted">{t.issueTitle}</span>
-          </button>
-        ))}
-      </div>
-      <div className="agent-detail">
-        {sel ? <AgentDetail task={sel} onOpenChanges={onOpenChanges} /> : <div className="empty">No agent selected.</div>}
-      </div>
-    </div>
-  )
-}
-
-function AgentDetail({ task, onOpenChanges }) {
-  const logRef = useRef(null)
-  const [reply, setReply] = useState('')
-  const [sending, setSending] = useState(false)
-  const [approving, setApproving] = useState(false)
-  const [, tick] = useState(0) // re-render every second while working, to tick the timer
-  useEffect(() => {
-    if (logRef.current) logRef.current.scrollTop = logRef.current.scrollHeight
-  }, [task.events?.length, task.status])
-
-  const workingLabel = WORKING_LABEL[task.status]
-  useEffect(() => {
-    if (!workingLabel) return
-    const i = setInterval(() => tick((n) => n + 1), 1000)
-    return () => clearInterval(i)
-  }, [workingLabel])
-  const lastTs = task.events?.length ? task.events[task.events.length - 1].ts : null
-  const idleSecs = workingLabel && lastTs ? Math.max(0, Math.floor((Date.now() - lastTs) / 1000)) : 0
-
-  async function post(path, body) {
-    return api(`/api/tasks/${task.id}/${path}`, {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: body ? JSON.stringify(body) : undefined,
-    })
-  }
-
-  const waiting = task.status === 'waiting'     // execution paused on a question
-  const planning = task.status === 'planning'   // planner is thinking
-  const planned = task.status === 'planned'     // plan ready, awaiting you
-  const reviewed = task.status === 'reviewed'   // review ready, awaiting you
-  const canChat = planning || planned || waiting
-  const busy = ACTIVE.has(task.status)
-
-  async function send() {
-    const text = reply.trim()
-    if (!text) return
-    setSending(true)
-    try {
-      await post(waiting ? 'answer' : 'message', { text }) // answer a question vs. refine the plan
-      setReply('')
-    } catch (e) { alert('Failed to send: ' + e.message) }
-    finally { setSending(false) }
-  }
-
-  async function approve() {
-    setApproving(true)
-    try { await post('approve') } catch (e) { alert('Approve failed: ' + e.message) }
-    finally { setApproving(false) }
-  }
-
-  const placeholder = waiting
-    ? 'Answer the question — the agent is paused…'
-    : 'Refine the plan — e.g. “use Argon2id, not the keyring” (⌘/Ctrl+Enter)'
-
-  return (
-    <>
-      <div className="agent-head">
-        <div>
-          <h1>{task.owner}/{task.repo} <span className="muted">#{task.issueNumber}</span></h1>
-          <div className="muted">{task.issueTitle}</div>
-        </div>
-        <div className="agent-actions">
-          <StatusBadge status={task.status} />
-          {task.model && <span className="badge model-badge">{task.model}</span>}
-          {task.branch && <span className="badge">{task.branch}</span>}
-          {busy && task.status !== 'changes_ready' && <button className="cancel" onClick={() => post('cancel')}>Cancel</button>}
-          {task.status === 'changes_ready' && onOpenChanges && (
-            <button className="approve-btn" onClick={() => onOpenChanges(task.id)}>Review changes →</button>
-          )}
-          {task.prUrl && <a className="dispatch" href={task.prUrl} target="_blank" rel="noreferrer">Open PR ↗</a>}
-        </div>
-      </div>
-
-      {task.error && <div className="error pad">⚠ {task.error}</div>}
-
-      <div className="log" ref={logRef}>
-        {(task.events || []).map((e, i) => (
-          <div key={i} className={`log-line log-${e.kind}`}>
-            {e.kind === 'text' ? <span className="log-text">{e.text}</span>
-              : e.kind === 'user' ? <span className="log-user">🧑 {e.text}</span>
-              : e.kind === 'tool' ? <span className="log-tool">{e.text}</span>
-              : e.kind === 'question' ? <span className="log-question">❓ {e.text}</span>
-              : e.kind === 'answer' ? <span className="log-answer">↩︎ {e.text}</span>
-              : e.kind === 'result' ? <span className="log-result">{e.ok ? '✅' : '⚠️'} {e.text}{e.costUsd != null ? ` · $${e.costUsd.toFixed(3)}` : ''}</span>
-              : e.kind === 'error' ? <span className="log-err">⚠ {e.text}</span>
-              : <span className="log-status">▸ {e.text}</span>}
-          </div>
-        ))}
-        {workingLabel && (
-          <div className="log-working">
-            <span className="dots"><span /><span /><span /></span>
-            {workingLabel}{idleSecs >= 3 ? ` · ${idleSecs}s` : ''}
-          </div>
-        )}
-        {!task.events?.length && !workingLabel && <div className="muted">Waiting for the agent to report in…</div>}
-      </div>
-
-      {reviewed && (
-        <div className="ask">
-          <div className="approve-row">
-            <span className="muted">Review ready. Approve to post it as a comment on the PR.</span>
-            <button className="approve-btn" disabled={approving} onClick={approve}>
-              {approving ? 'Posting…' : '✅ Approve & Post'}
-            </button>
-          </div>
-        </div>
-      )}
-
-      {canChat && (
-        <div className={`ask ${waiting ? 'ask-waiting' : ''}`}>
-          {waiting && <div className="ask-q">❓ {task.question}</div>}
-          {planned && (
-            <div className="approve-row">
-              <span className="muted">Plan ready. Refine it below, or send it to execution.</span>
-              <button className="approve-btn" disabled={approving} onClick={approve}>
-                {approving ? 'Dispatching…' : '✅ Approve & Dispatch'}
-              </button>
-            </div>
-          )}
-          <div className="ask-row">
-            <textarea
-              className="ask-input"
-              placeholder={placeholder}
-              value={reply}
-              onChange={(e) => setReply(e.target.value)}
-              onKeyDown={(e) => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) send() }}
-            />
-            <button className="dispatch" disabled={sending || !reply.trim()} onClick={send}>
-              {sending ? 'Sending…' : 'Send ↵'}
-            </button>
-          </div>
-        </div>
-      )}
-    </>
   )
 }
