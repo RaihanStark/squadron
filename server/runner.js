@@ -525,6 +525,26 @@ export async function pushTask(taskId) {
     await updateTask(taskId, { status: 'interrupted' })
     return false
   }
+
+  // CI-fix tasks push back to the existing PR's head branch — no new PR.
+  if (task.kind === 'fix') {
+    try {
+      addEvent(taskId, { kind: 'status', text: 'Pushing fix to the PR branch…' })
+      await updateTask(taskId, { status: 'pushing' })
+      await git.pushToRef(git.worktreePathFor(taskId), task.branch)
+      await gh.postPrComment(task.owner, task.repo, task.issueNumber, '🤖 Pushed a CI fix from Squadron — re-running checks.').catch(() => {})
+      await updateTask(taskId, { status: 'pr_open', prUrl: task.prUrl })
+      addEvent(taskId, { kind: 'result', text: `Fix pushed to PR #${task.issueNumber}${task.prUrl ? ` → ${task.prUrl}` : ''}`, ok: true })
+      preview.stop(taskId)
+      await git.removeWorktree(task.owner, task.repo, taskId)
+      return true
+    } catch (err) {
+      addEvent(taskId, { kind: 'error', text: err.message })
+      await updateTask(taskId, { status: 'error', error: err.message })
+      return false
+    }
+  }
+
   const { owner, repo, branch, base, issueNumber } = task
 
   // Resolve tasks push the completed merge back to the PR's own head branch and
@@ -743,6 +763,117 @@ async function approveReview(taskId, task) {
     addEvent(taskId, { kind: 'error', text: err.message })
     await updateTask(taskId, { status: 'error', error: err.message })
     return false
+  }
+}
+
+// --- CI fix: dispatch an agent to read failing CI logs and fix the build ---
+
+function ciFixPrompt(owner, repo, pr, logs) {
+  return `You are an autonomous engineer fixing failing CI on pull request #${pr.number} ("${pr.title}") in ${owner}/${repo}. The PR's head branch is already checked out in your current working directory.
+
+CI is failing on this PR. The failing CI logs are below — use them to diagnose the problem, then fix it in the working tree.
+
+--- FAILING CI LOGS ---
+${logs}
+--- END LOGS ---
+
+Guidelines:
+- You are already at the repo root. Use relative paths only; never cd elsewhere or touch other locations — those attempts are blocked and waste turns.
+- Investigate the failure first (read the implicated files/tests), then make the smallest correct fix.
+- Work in parallel: when reading or grepping several files, issue those tool calls together in one step.
+- Match the project's existing style and conventions. If there's a test suite, run it to confirm the build is green before finishing.
+- Do NOT commit, push, or open a PR — the harness handles git. Leave your finished changes saved in the working tree.
+- End with a 2-4 sentence summary of what was failing and how you fixed it.`
+}
+
+// Pull the failing-step logs for every failing run on the PR, capped like the
+// review diff. Falls back to a check summary if no run logs are retrievable.
+async function collectFailingLogs(owner, repo, pr) {
+  const MAX = 60000
+  const runIds = gh.failedRunIds(pr.statusCheckRollup)
+  let logs = ''
+  for (const runId of runIds) {
+    try {
+      const log = await gh.failedRunLog(owner, repo, runId)
+      if (log.trim()) logs += `\n===== run ${runId} =====\n${log}\n`
+    } catch (err) {
+      logs += `\n===== run ${runId} (log unavailable: ${err.message}) =====\n`
+    }
+  }
+  if (!logs.trim()) {
+    // No Actions run logs (e.g. legacy status contexts) — hand over the checks list.
+    try {
+      const checks = await gh.prChecks(owner, repo, pr.number)
+      const failed = (checks || []).filter((c) => c.bucket === 'fail' || c.state === 'FAILURE' || c.state === 'ERROR')
+      if (failed.length) logs = failed.map((c) => `- ${c.name} (${c.workflow || ''}): ${c.state} — ${c.link || ''}`).join('\n')
+    } catch { /* ignore */ }
+  }
+  if (!logs.trim()) logs = '(No failing CI logs could be retrieved automatically — inspect the PR checks to find the failure.)'
+  if (logs.length > MAX) logs = logs.slice(0, MAX) + '\n…[logs truncated]…'
+  return logs
+}
+
+// Check the PR head into a writable worktree, let the agent fix the failing CI,
+// then commit the fix LOCALLY and land it in "Ready to Review". The operator
+// reviews the diff and pushes — and pushTask routes the fix back to the PR head.
+export async function startCiFix(task) {
+  const { id, owner, repo, issueNumber: prNumber, model } = task
+  try {
+    await updateTask(id, { status: 'preparing' })
+    addEvent(id, { kind: 'status', text: `Fetching PR #${prNumber}…` })
+    const pr = await gh.getPr(owner, repo, prNumber)
+    const headRef = pr.headRefName
+    if (gh.ciState(pr.statusCheckRollup) !== 'failure') {
+      addEvent(id, { kind: 'error', text: 'CI is not failing on this PR — nothing to fix.' })
+      await updateTask(id, { status: 'error', error: 'CI is not failing' })
+      sessions.delete(id)
+      return
+    }
+
+    addEvent(id, { kind: 'status', text: 'Gathering failing CI logs…' })
+    const logs = await collectFailingLogs(owner, repo, pr)
+
+    addEvent(id, { kind: 'status', text: 'Checking out PR head in a worktree…' })
+    const { path: wt } = await git.createPrHeadWorktree(owner, repo, id, headRef)
+    await updateTask(id, { status: 'running', branch: headRef, base: headRef, prUrl: pr.url })
+
+    const ac = new AbortController()
+    sessions.set(id, { id, owner, repo, kind: 'fix', prNumber, wt, branch: headRef, base: headRef, ac })
+
+    addEvent(id, { kind: 'status', text: `Fixing CI on #${prNumber}…` })
+    const res = await runExecution({
+      prompt: ciFixPrompt(owner, repo, pr, logs),
+      cwd: wt, model, signal: ac.signal,
+      onEvent: (e) => e.kind === 'delta' ? streamText(id, e.text) : addEvent(id, e),
+      askUser: askUserFor(id),
+    })
+
+    if (ac.signal.aborted) {
+      await updateTask(id, { status: 'cancelled' })
+      await git.removeWorktree(owner, repo, id)
+      sessions.delete(id)
+      return
+    }
+
+    addEvent(id, { kind: 'status', text: 'Committing fix locally…' })
+    await updateTask(id, { status: 'committing', summary: res.summary, costUsd: res.costUsd })
+    const committed = await git.commitAll(wt, `Fix CI for #${prNumber}`)
+    if (!committed) {
+      addEvent(id, { kind: 'status', text: 'No file changes produced.' })
+      await updateTask(id, { status: 'no_changes' })
+      await git.removeWorktree(owner, repo, id)
+      sessions.delete(id)
+      return
+    }
+    await updateTask(id, { status: 'changes_ready', staged: true })
+    addEvent(id, { kind: 'result', text: 'Fix ready for review (local — not pushed). Review the diff, then push to update the PR.', ok: true })
+    sessions.delete(id) // keep the worktree on disk for the diff + later push
+  } catch (err) {
+    console.error(`[ci-fix ${id}]`, err)
+    addEvent(id, { kind: 'error', text: err.message })
+    await updateTask(id, { status: 'error', error: err.message })
+    await git.removeWorktree(owner, repo, id).catch(() => {})
+    sessions.delete(id)
   }
 }
 

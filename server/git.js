@@ -63,6 +63,26 @@ export async function createPrWorktree(owner, repo, taskId, prNumber) {
   return { path: wt }
 }
 
+// Writable worktree checked out at a PR's head branch, for the CI-fix flow.
+// Unlike createPrWorktree (detached, review-only), this lands on a local branch
+// so the agent's fix can be committed and pushed back to the PR's head ref.
+// Fetching `<headRef>` also updates refs/remotes/origin/<headRef>, so taskDiff
+// (origin/<headRef>...HEAD) shows only the fix commit. Same-repo PRs only.
+export async function createPrHeadWorktree(owner, repo, taskId, headRef) {
+  const mirror = await ensureMirror(owner, repo)
+  await mkdir(WORKTREES_DIR, { recursive: true })
+  const wt = worktreePath(taskId)
+  await git(['fetch', 'origin', headRef], mirror)
+  await git(['worktree', 'add', '-b', `squadron-cifix/${taskId}`, wt, 'FETCH_HEAD'], mirror)
+  return { path: wt }
+}
+
+// Push the worktree's HEAD to an existing branch on origin (the PR head ref),
+// updating the open PR in place rather than opening a new one.
+export async function pushToRef(wt, headRef) {
+  await git(['push', 'origin', `HEAD:${headRef}`], wt)
+}
+
 // Worktree on the PR's head branch with the base branch merged in (left
 // uncommitted, conflicts and all). Used to drive AI conflict resolution: the
 // agent edits the conflicted files in place, then we commit the merge and push

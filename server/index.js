@@ -202,6 +202,18 @@ app.post('/api/repos/:owner/:repo/review', handle(async (req) => {
   return task
 }))
 
+// Dispatch an agent to fix failing CI on a PR. The fix lands in Ready to Review;
+// pushing it updates the existing PR branch (no new PR). Streams over /api/stream.
+app.post('/api/repos/:owner/:repo/pulls/:number/fix-ci', handle(async (req) => {
+  const { owner, repo, number } = req.params
+  const { prTitle, model } = req.body || {}
+  const existing = await findActiveByIssue(owner, repo, number, 'fix')
+  if (existing) return { ...existing, deduped: true }
+  const task = await createTask({ owner, repo, issueNumber: Number(number), issueTitle: prTitle, model, kind: 'fix' })
+  runner.startCiFix(task).catch((e) => console.error('startCiFix crashed', e))
+  return task
+}))
+
 // Start an AI merge-conflict resolution for a PR. Merges base into the head in
 // an isolated worktree, has the agent resolve the conflicts, then waits for
 // operator review before pushing back to the PR's branch. Streams over /api/stream.
