@@ -1,10 +1,25 @@
 // Thin wrappers over the `gh` CLI. Everything returns parsed JSON.
 // Keeping GitHub access behind `gh` means we inherit the user's existing auth
 // and never touch a token directly.
-import { execFile } from 'node:child_process'
+import { execFile, spawn } from 'node:child_process'
 import { promisify } from 'node:util'
 
 const run = promisify(execFile)
+
+// Run `gh` with a JSON body piped to stdin (for `gh api --input -`).
+function ghStdin(args, input) {
+  return new Promise((resolve, reject) => {
+    const p = spawn('gh', args, { stdio: ['pipe', 'pipe', 'pipe'] })
+    let out = ''
+    let err = ''
+    p.stdout.on('data', (d) => { out += d })
+    p.stderr.on('data', (d) => { err += d })
+    p.on('error', reject)
+    p.on('close', (code) => (code === 0 ? resolve(out) : reject(new Error((err || `gh exited ${code}`).trim()))))
+    p.stdin.write(input)
+    p.stdin.end()
+  })
+}
 
 async function gh(args) {
   const { stdout } = await run('gh', args, { maxBuffer: 20 * 1024 * 1024 })
@@ -72,6 +87,18 @@ export function getPrDiff(owner, repo, number) {
 // Post a comment on a PR. Returns the comment URL.
 export function postPrComment(owner, repo, number, body) {
   return ghRaw(['pr', 'comment', String(number), '--repo', `${owner}/${repo}`, '--body', body])
+}
+
+// Create a PR review with optional inline comments via the Reviews API.
+// payload: { body, event: 'COMMENT', comments: [{ path, line, side, body }] }
+// Returns the review's html_url.
+export async function postPrReview(owner, repo, number, payload) {
+  const out = await ghStdin(
+    ['api', `repos/${owner}/${repo}/pulls/${number}/reviews`, '--method', 'POST', '--input', '-'],
+    JSON.stringify(payload),
+  )
+  const res = JSON.parse(out)
+  return res.html_url || ''
 }
 
 // Open a PR for an already-pushed branch. Returns the PR URL.

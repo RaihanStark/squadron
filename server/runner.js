@@ -277,6 +277,27 @@ function parseReview(text) {
   return { summary: stripped, findings: [] }
 }
 
+// RIGHT-side (new-file) line numbers that are commentable, per file path —
+// i.e. added/context lines present in the diff. GitHub rejects inline comments
+// on lines not in the diff, so we use this to split findings.
+export function commentableLines(diff) {
+  const map = {}
+  let path = null
+  let newNum = 0
+  let inHunk = false
+  for (const l of String(diff || '').split('\n')) {
+    if (l.startsWith('diff --git')) { path = l.match(/ b\/(.+)$/)?.[1] || null; inHunk = false }
+    else if (l.startsWith('+++ ')) { const p = l.slice(4).replace(/^b\//, ''); if (p !== '/dev/null') path = p }
+    else if (l.startsWith('@@')) { newNum = parseInt(l.match(/\+(\d+)/)?.[1] || '0', 10); inHunk = true }
+    else if (inHunk && path) {
+      if (l[0] === '+' || l[0] === ' ') { (map[path] ||= new Set()).add(newNum); newNum++ }
+      else if (l[0] === '-') { /* old side: no new-file line */ }
+      else inHunk = false
+    }
+  }
+  return map
+}
+
 function reviewToMarkdown(task) {
   const out = [task.review || 'Reviewed.']
   if (task.findings?.length) {
@@ -334,13 +355,43 @@ export async function startReview(task) {
 }
 
 async function approveReview(taskId, task) {
-  if (!task || task.status !== 'reviewed' || !task.review) return false
-  const { owner, repo, issueNumber: prNumber, review } = task
+  if (!task || task.status !== 'reviewed') return false
+  const { owner, repo, issueNumber: prNumber } = task
+  const findings = task.findings || []
   try {
     addEvent(taskId, { kind: 'status', text: 'Posting review to the PR…' })
     await updateTask(taskId, { status: 'posting' })
-    const body = reviewToMarkdown(task)
-    const url = await gh.postPrComment(owner, repo, prNumber, `${body}\n\n---\n🤖 Reviewed by Squadron`)
+
+    // Split findings into anchorable inline comments vs. overflow (line not in diff).
+    const valid = commentableLines(await gh.getPrDiff(owner, repo, prNumber))
+    const inline = []
+    const overflow = []
+    for (const f of findings) {
+      if (f.line != null && valid[f.file]?.has(f.line)) {
+        inline.push({ path: f.file, line: f.line, side: 'RIGHT', body: `**${f.severity}** — ${f.body}` })
+      } else overflow.push(f)
+    }
+
+    let body = task.review || 'Reviewed.'
+    if (overflow.length) {
+      body += '\n\n## Other findings\n' + overflow.map((f) => `- **\`${f.file}:${f.line ?? '?'}\`** — _${f.severity}_ — ${f.body}`).join('\n')
+    }
+    body += '\n\n---\n🤖 Reviewed by Squadron'
+
+    let url
+    if (inline.length) {
+      addEvent(taskId, { kind: 'status', text: `Posting ${inline.length} inline comment(s)…` })
+      try {
+        url = await gh.postPrReview(owner, repo, prNumber, { body, event: 'COMMENT', comments: inline })
+      } catch (err) {
+        // GitHub can reject inline positions; fall back to a single summary comment.
+        addEvent(taskId, { kind: 'status', text: `Inline review rejected (${err.message.slice(0, 80)}); posting as a comment.` })
+        url = await gh.postPrComment(owner, repo, prNumber, `${reviewToMarkdown(task)}\n\n---\n🤖 Reviewed by Squadron`)
+      }
+    } else {
+      url = await gh.postPrComment(owner, repo, prNumber, `${body}`)
+    }
+
     await updateTask(taskId, { status: 'review_posted', prUrl: url })
     addEvent(taskId, { kind: 'result', text: `Review posted → ${url}`, ok: true })
     sessions.delete(taskId)
