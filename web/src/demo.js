@@ -40,7 +40,7 @@ export const issuesByRepo = {
 
 export const pullsByRepo = {
   'acme/financy': [
-    { number: 40, title: 'Release to Flathub', labels: [L('packaging', '0e8a16')], isDraft: false, reviewDecision: 'REVIEW_REQUIRED', additions: 213, deletions: 18, updatedAt: ago(20), url: '#' },
+    { number: 40, title: 'Release to Flathub', labels: [L('packaging', '0e8a16')], isDraft: false, reviewDecision: 'REVIEW_REQUIRED', additions: 213, deletions: 18, updatedAt: ago(20), url: '#', statusCheckRollup: [{ status: 'COMPLETED', conclusion: 'SUCCESS', name: 'build' }, { status: 'COMPLETED', conclusion: 'SUCCESS', name: 'test' }] },
   ],
   'acme/timetracky': [],
 }
@@ -194,6 +194,14 @@ export function demoApi(path, opts) {
   }
   if (/\/tasks\/tchg\/diff$/.test(path)) return Promise.resolve({ diff: CHANGE_DIFF })
   if (/\/pulls\/\d+\/diff$/.test(path)) return Promise.resolve({ diff: DEMO_DIFF })
+  if (opts?.method === 'POST' && /\/pulls\/\d+\/merge$/.test(path)) return Promise.resolve({ merged: '' })
+  const prDetail = path.match(/\/pulls\/(\d+)$/)
+  if (prDetail) {
+    for (const arr of Object.values(pullsByRepo)) {
+      const f = arr.find((p) => String(p.number) === prDetail[1])
+      if (f) return Promise.resolve({ ...f, body: '(demo)', mergeable: 'MERGEABLE', mergeStateStatus: 'CLEAN' })
+    }
+  }
   if (path === '/api/repos/all') return Promise.resolve(allRepos)
   if (path === '/api/repos') return Promise.resolve(repos)
   if (path === '/api/selected-repos') return Promise.resolve(repos.map((r) => r.nameWithOwner))

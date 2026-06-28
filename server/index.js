@@ -126,6 +126,15 @@ app.get('/api/repos/:owner/:repo/pulls', handle((req) =>
 app.get('/api/repos/:owner/:repo/pulls/:number/diff', handle(async (req) =>
   ({ diff: await github.getPrDiff(req.params.owner, req.params.repo, req.params.number) })))
 
+// Fresh detail for a single PR (incl. CI rollup + mergeable state).
+app.get('/api/repos/:owner/:repo/pulls/:number', handle((req) =>
+  github.getPr(req.params.owner, req.params.repo, req.params.number)))
+
+// Merge a PR. Only reachable from the UI when CI is green and the PR is
+// mergeable; GitHub enforces branch protection regardless.
+app.post('/api/repos/:owner/:repo/pulls/:number/merge', handle(async (req) =>
+  ({ merged: await github.mergePr(req.params.owner, req.params.repo, req.params.number, { method: req.body?.method }) })))
+
 // --- Agents / tasks (slice 2) ---
 
 // Start an interactive planning session for an issue. Returns the created task
