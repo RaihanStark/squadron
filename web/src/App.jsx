@@ -228,6 +228,10 @@ function RepoView({ repo, tab, setTab, onDispatch, onReview, onOpenTask, onOpenP
     else taskByIssue[t.issueNumber] = t
   }
 
+  // A PR whose AI review is done but not yet posted is "Ready to Review".
+  const readyPrs = (pulls || []).filter((p) => taskByPr[p.number]?.status === 'reviewed')
+  const openPrs = (pulls || []).filter((p) => taskByPr[p.number]?.status !== 'reviewed')
+
   return (
     <>
       <div className="main-head">
@@ -236,8 +240,11 @@ function RepoView({ repo, tab, setTab, onDispatch, onReview, onOpenTask, onOpenP
           <button className={tab === 'backlog' ? 'on' : ''} onClick={() => setTab('backlog')}>
             Backlog {issues ? `· ${issues.length}` : ''}
           </button>
+          <button className={tab === 'review' ? 'on' : ''} onClick={() => setTab('review')}>
+            Ready to Review{readyPrs.length ? <span className="tab-badge">{readyPrs.length}</span> : ''}
+          </button>
           <button className={tab === 'prs' ? 'on' : ''} onClick={() => setTab('prs')}>
-            Pull Requests {pulls ? `· ${pulls.length}` : ''}
+            Pull Requests {pulls ? `· ${openPrs.length}` : ''}
           </button>
         </div>
       </div>
@@ -246,22 +253,53 @@ function RepoView({ repo, tab, setTab, onDispatch, onReview, onOpenTask, onOpenP
 
       <div className="list">
         {tab === 'backlog' && (
-          <IssueList issues={issues} taskByIssue={taskByIssue} onOpenTask={onOpenTask} onDispatch={(it, model) => onDispatch(repo, it, model)} />
+          issues === null ? <div className="muted pad">Loading missions…</div>
+            : !issues.length ? <div className="muted pad">No open issues. Clear skies. ✦</div>
+            : issues.map((it) => (
+              <IssueRow key={it.number} issue={it} task={taskByIssue[it.number]} onOpenTask={onOpenTask}
+                onDispatch={(i, model) => onDispatch(repo, i, model)} />
+            ))
         )}
+
+        {tab === 'review' && (
+          pulls === null ? <div className="muted pad">Loading…</div>
+            : readyPrs.length
+              ? readyPrs.map((pr) => (
+                <PrCard key={pr.number} pr={pr} task={taskByPr[pr.number]} onOpenPr={() => onOpenPr(repo, pr)} cta="Post →" />
+              ))
+              : <div className="muted pad">Empty — no AI reviews are staged yet. Open a PR in <strong>Pull Requests</strong> and run 🤖 AI Review; the result waits here until you post it to GitHub.</div>
+        )}
+
         {tab === 'prs' && (
-          <PullList pulls={pulls} taskByPr={taskByPr} onOpenPr={(pr) => onOpenPr(repo, pr)} />
+          pulls === null ? <div className="muted pad">Loading sorties…</div>
+            : openPrs.length
+              ? openPrs.map((pr) => (
+                <PrCard key={pr.number} pr={pr} task={taskByPr[pr.number]} onOpenPr={() => onOpenPr(repo, pr)} cta="Review →" />
+              ))
+              : <div className="muted pad">No open PRs awaiting review.</div>
         )}
       </div>
     </>
   )
 }
 
-function IssueList({ issues, taskByIssue, onDispatch, onOpenTask }) {
-  if (issues === null) return <div className="muted pad">Loading missions…</div>
-  if (!issues.length) return <div className="muted pad">No open issues. Clear skies. ✦</div>
-  return issues.map((it) => (
-    <IssueRow key={it.number} issue={it} task={taskByIssue[it.number]} onDispatch={onDispatch} onOpenTask={onOpenTask} />
-  ))
+function PrCard({ pr, task, onOpenPr, cta }) {
+  return (
+    <div className="card card-click" onClick={onOpenPr}>
+      <div className="card-main">
+        <span className="num">#{pr.number}</span>
+        <span className="title">{pr.title}</span>
+      </div>
+      <div className="card-meta">
+        <span className="diff add">+{pr.additions}</span>
+        <span className="diff del">−{pr.deletions}</span>
+        {pr.isDraft && <span className="badge">draft</span>}
+        {task?.findings?.length ? <span className="badge model-badge">{task.findings.length} finding(s)</span> : null}
+        {task && task.status !== 'reviewed' && <StatusBadge status={task.status} />}
+        <span className="chev">{cta}</span>
+      </div>
+    </div>
+  )
 }
 
 function IssueRow({ issue: it, task, onDispatch, onOpenTask }) {
@@ -307,32 +345,6 @@ function IssueRow({ issue: it, task, onDispatch, onOpenTask }) {
       </div>
     </div>
   )
-}
-
-function PullList({ pulls, taskByPr, onOpenPr }) {
-  if (pulls === null) return <div className="muted pad">Loading sorties…</div>
-  if (!pulls.length) return <div className="muted pad">No open PRs.</div>
-  return pulls.map((pr) => {
-    const task = taskByPr[pr.number]
-    return (
-      <div key={pr.number} className="card card-click" onClick={() => onOpenPr(pr)}>
-        <div className="card-main">
-          <span className="num">#{pr.number}</span>
-          <span className="title">{pr.title}</span>
-          {pr.isDraft && <span className="badge">draft</span>}
-        </div>
-        <div className="card-meta">
-          <span className="diff add">+{pr.additions}</span>
-          <span className="diff del">−{pr.deletions}</span>
-          {pr.reviewDecision && <span className="badge">{pr.reviewDecision.toLowerCase().replace('_', ' ')}</span>}
-          <span className="muted">{timeAgo(pr.updatedAt)}</span>
-          {task && task.findings?.length ? <span className="badge model-badge">{task.findings.length} finding(s)</span> : null}
-          {task && <StatusBadge status={task.status} />}
-          <span className="chev">View changes →</span>
-        </div>
-      </div>
-    )
-  })
 }
 
 function PrDetail({ repo, pr, task, onReview, onBack }) {
