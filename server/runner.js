@@ -50,6 +50,28 @@ ${issue.body || '(no description provided)'}
 --- END ISSUE ---`
 }
 
+function errandFirstMessage(owner, repo, instruction, tree) {
+  return `You are an autonomous engineer handling a quick task ("errand") in a fresh git worktree of ${owner}/${repo}. The repo is checked out in your working directory. This is a lightweight fast-lane — make the change directly; there is no separate planning step.
+
+--- TASK ---
+${instruction}
+--- END TASK ---
+
+Use the file tree below to jump straight to the relevant files. When you read or grep several files, do it in ONE step with parallel tool calls rather than one at a time.
+
+--- FILE TREE (${tree.total} files${tree.shown < tree.total ? `, first ${tree.shown}` : ''}) ---
+${tree.list}
+--- END FILE TREE ---
+
+Guidelines:
+- You are already at the repository root. Use relative paths only; never cd elsewhere or touch other locations — those attempts are blocked and waste turns.
+- Work in parallel: when reading or grepping several files, issue those tool calls together in one step.
+- Match the project's existing style and conventions. Run commands (build, tests, version bumps) in the worktree as needed.
+- Do NOT commit, push, or open a pull request — the operator reviews and stages your changes.
+- The operator may send follow-up instructions to refine the work, so keep going until they're satisfied.
+- End each turn with a 1-3 sentence summary of what you changed.`
+}
+
 function executePrompt(owner, repo, issue, plan) {
   return `You are an autonomous engineer working in a fresh git worktree of ${owner}/${repo}. The repo is checked out in your working directory.
 
@@ -115,6 +137,62 @@ export async function startPlan(task, { defaultBranch } = {}) {
   }
 }
 
+// --- Errand phase ---
+//
+// A plan-less "quick task": an interactive, write-capable session in an isolated
+// worktree. The operator chats with the agent and, when happy, stages the result
+// into "Ready to Review" — from there it follows the normal push→PR path.
+export async function startErrand(task, { instruction, defaultBranch } = {}) {
+  const { id, owner, repo, model } = task
+  const text = instruction || task.body || task.issueTitle
+  try {
+    await updateTask(id, { status: 'preparing' })
+    addEvent(id, { kind: 'status', text: 'Preparing isolated worktree…' })
+    const { path: wt, branch, base } = await git.createWorktree(owner, repo, id, defaultBranch)
+    await updateTask(id, { branch, base, status: 'running' })
+
+    const tree = await git.trackedFiles(wt).catch(() => ({ total: 0, shown: 0, list: '(unavailable)' }))
+    const issue = { number: null, title: task.issueTitle }
+    const ctx = { id, owner, repo, issue, wt, branch, base, model, phase: 'errand', kind: 'errand', instruction: text, lastText: '' }
+    sessions.set(id, ctx)
+
+    const handle = await openSession({
+      cwd: wt, model, permissionMode: 'bypassPermissions',
+      askUser: askUserFor(id),
+      onMessage: (m) => onSessionMessage(ctx, m),
+    })
+    ctx.handle = handle
+    handle.send(errandFirstMessage(owner, repo, text, tree))
+  } catch (err) {
+    console.error(`[errand ${id}]`, err)
+    addEvent(id, { kind: 'error', text: err.message })
+    await updateTask(id, { status: 'error', error: err.message })
+    sessions.delete(id)
+  }
+}
+
+// Errand messages from the interactive session. Mirrors execution's mapping, but
+// on a finished turn we go IDLE (keeping the session warm) instead of finalizing —
+// the operator drives staging explicitly.
+function onErrandMessage(ctx, m) {
+  const { id } = ctx
+  switch (m.type) {
+    case 'system':
+      if (m.subtype === 'init') addEvent(id, { kind: 'status', text: `agent online · ${m.model || ctx.model}` })
+      break
+    case 'assistant':
+      for (const b of m.message?.content ?? []) {
+        if (b.type === 'text' && b.text?.trim()) { ctx.lastText = b.text.trim(); addEvent(id, { kind: 'text', text: ctx.lastText }) }
+        else if (b.type === 'tool_use' && !b.name?.endsWith('ask_user')) addEvent(id, { kind: 'tool', text: describeTool(b) })
+      }
+      break
+    case 'result':
+      // Turn finished — await the operator's next instruction or a stage.
+      updateTask(id, { status: 'errand_idle', summary: ctx.lastText })
+      break
+  }
+}
+
 // Every message from the long-lived session funnels through here. The session
 // starts in plan mode, then (on approval) flips to autonomous execution in the
 // SAME conversation — so we route by phase rather than tearing it down.
@@ -127,6 +205,7 @@ function onSessionMessage(ctx, m) {
   }
   if (ctx.phase === 'planning') return onPlanMessage(ctx, m)
   if (ctx.phase === 'executing') return onExecMessage(ctx, m)
+  if (ctx.phase === 'errand') return onErrandMessage(ctx, m)
   // 'cancelled' / anything else: ignore trailing messages.
 }
 
@@ -196,10 +275,48 @@ function continueAsExecution(ctx, plan, ac) {
 
 export function sendMessage(taskId, text) {
   const ctx = sessions.get(taskId)
-  if (!ctx || ctx.phase !== 'planning') return false
-  addEvent(taskId, { kind: 'user', text })
-  updateTask(taskId, { status: 'planning' })
-  ctx.handle.send(text)
+  if (!ctx || !ctx.handle) return false
+  // Planning chat refines the plan; an errand chat sends a follow-up instruction.
+  if (ctx.phase === 'planning') {
+    addEvent(taskId, { kind: 'user', text })
+    updateTask(taskId, { status: 'planning' })
+    ctx.handle.send(text)
+    return true
+  }
+  if (ctx.phase === 'errand') {
+    addEvent(taskId, { kind: 'user', text })
+    updateTask(taskId, { status: 'running' })
+    ctx.handle.send(text)
+    return true
+  }
+  return false
+}
+
+// Stage an errand's working-tree changes into "Ready to Review": commit locally
+// (no push), close the warm session, and hand off to the normal push→PR flow.
+export async function stageErrand(taskId) {
+  const ctx = sessions.get(taskId)
+  const task = await getTask(taskId)
+  if (!task || task.kind !== 'errand') return false
+  if (!ctx || ctx.phase !== 'errand') {
+    addEvent(taskId, { kind: 'error', text: 'This errand session is no longer live — start a new quick task.' })
+    return false
+  }
+  const { owner, repo, wt } = ctx
+  addEvent(taskId, { kind: 'status', text: 'Committing changes locally…' })
+  await updateTask(taskId, { status: 'committing', summary: ctx.lastText || task.summary })
+  const committed = await git.commitAll(wt, ctx.instruction || task.issueTitle || 'Quick task')
+  try { ctx.handle?.close() } catch { /* already closed */ }
+  if (!committed) {
+    addEvent(taskId, { kind: 'status', text: 'No file changes produced.' })
+    await updateTask(taskId, { status: 'no_changes' })
+    await git.removeWorktree(owner, repo, taskId)
+    sessions.delete(taskId)
+    return false
+  }
+  await updateTask(taskId, { status: 'changes_ready', staged: true })
+  addEvent(taskId, { kind: 'result', text: 'Changes ready for review (local — not pushed). Review the diff, then push to open a PR.', ok: true })
+  sessions.delete(taskId) // keep the worktree on disk for the diff + later push
   return true
 }
 

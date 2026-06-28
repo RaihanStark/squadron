@@ -126,6 +126,34 @@ body {
 /* Emphasize the Ready-to-Review tab when it has staged reviews (unless active). */
 .tabs button.has-ready:not(.on) { color: var(--accent); }
 
+/* "Quick task" toggle, pinned to the right of the tab row. */
+.errand-toggle {
+  margin-left: auto; background: none; border: none; color: var(--muted);
+  padding: 8px 14px; cursor: pointer; font-size: 13px;
+  border-bottom: 2px solid transparent; margin-bottom: -1px;
+}
+.errand-toggle.on { color: var(--text); border-bottom-color: var(--accent); }
+
+/* Repo home split: backlog/list on the left, optional Quick-task sidebar on the right. */
+.repo-body { display: flex; flex: 1; min-height: 0; }
+.repo-body .list { flex: 1; min-width: 0; }
+
+.repo-chat {
+  width: 400px; flex-shrink: 0; min-height: 0;
+  display: flex; flex-direction: column;
+  border-left: 1px solid var(--border); background: var(--panel);
+}
+.repo-chat-head {
+  display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  padding: 12px 16px; border-bottom: 1px solid var(--border);
+  font-weight: 600; font-size: 13px;
+}
+.repo-chat-launch { padding: 16px; display: flex; flex-direction: column; gap: 12px; }
+.repo-chat-launch p { margin: 0; font-size: 12.5px; line-height: 1.5; }
+.repo-chat-launch .ask-input { min-height: 96px; }
+.repo-chat .log { border-bottom: none; }
+.repo-chat-actions { display: flex; gap: 8px; justify-content: space-between; margin-top: 10px; }
+
 .card {
   display: flex; flex-direction: column; gap: 8px;
   padding: 12px 14px; margin-bottom: 8px; text-decoration: none; color: inherit;
