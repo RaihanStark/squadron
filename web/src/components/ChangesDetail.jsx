@@ -156,7 +156,6 @@ export default function ChangesDetail({ task, onBack }) {
               {pRunning ? <button className="cancel" onClick={stopPreview}>■ Stop</button> : <button className="approve-btn" onClick={startPreview}>▶ Start</button>}
               {preview?.url && <a className="dispatch" href={preview.url} target="_blank" rel="noreferrer">Open {preview.url} ↗</a>}
             </div>
-            {preview?.url && <iframe className="preview-frame" src={preview.url} title="preview" />}
             {pRunning && !preview?.url && <div className="muted preview-note">Running — no web URL detected. A desktop app (e.g. Go/Fyne) opens its window on your machine.</div>}
             {preview?.logs?.length ? (
               <div className="preview-logs">
