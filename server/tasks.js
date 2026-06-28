@@ -87,11 +87,11 @@ export async function findActiveByIssue(owner, repo, number, kind = 'plan') {
   return null
 }
 
-export async function createTask({ owner, repo, issueNumber, issueTitle, model, kind = 'plan' }) {
+export async function createTask({ owner, repo, issueNumber, issueTitle, model, kind = 'plan', local = false, body = null }) {
   await load()
   const id = randomUUID().slice(0, 8)
   const task = {
-    id, owner, repo, kind, issueNumber, issueTitle, model: model || 'opus',
+    id, owner, repo, kind, issueNumber, issueTitle, local, body, model: model || 'opus',
     status: 'queued', branch: null, base: null, prUrl: null,
     plan: null, review: null, findings: null, question: null, summary: null, error: null, costUsd: null,
     createdAt: Date.now(), events: [],

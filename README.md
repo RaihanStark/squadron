@@ -51,7 +51,10 @@ whole review to GitHub with one click.
 
 ## What it does
 
-- **Manage the backlog** — open issues across every repo, in one view
+- **Manage the backlog** — open issues across every repo, in one view; open any item to
+  read its full detail
+- **Draft backlog items** — create issues right in Squadron and either **save locally**
+  (kept in Squadron, not on GitHub) or **create on GitHub**; promote a local draft later
 - **Plan → approve → review → PR** — scope an issue interactively, approve, and an
   autonomous agent implements it locally in an isolated worktree; you review the diff in
   **Ready to Review** and push to open the PR when it's right
@@ -116,7 +119,8 @@ Open **http://localhost:5173**. To preview with demo data (no real repos touched
 | 6 | PR review — read-only AI review of a diff → approve → post comment | ✅ |
 | 7 | In-app diff viewer + inline AI review findings | ✅ |
 | 8 | Review-before-push — agent commits locally → review diff → push to PR | ✅ |
-| 9 | Parallel agents panel + run history | ⏳ |
+| 9 | Create backlog items (local draft or GitHub) + issue detail view | ✅ |
+| 10 | Parallel agents panel + run history | ⏳ |
 
 ## License
 

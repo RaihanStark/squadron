@@ -161,6 +161,35 @@ body {
 .finding.sev-bug .finding-sev, .finding.sev-security .finding-sev { color: var(--red); }
 .finding-body { color: var(--text); line-height: 1.5; white-space: pre-wrap; }
 
+.row-actions { display: inline-flex; align-items: center; gap: 10px; }
+.local-badge { color: #d2a8ff; border: 1px solid #5a3a8a; text-transform: uppercase; font-size: 10px; letter-spacing: 1px; }
+
+/* New backlog item (slice 9) */
+.new-issue-btn {
+  width: 100%; text-align: left; background: none; color: var(--accent);
+  border: 1px dashed var(--accent-dim); border-radius: 8px; padding: 10px 14px;
+  cursor: pointer; margin-bottom: 8px; font-size: 13px; font-weight: 600;
+}
+.new-issue-btn:hover { border-color: var(--accent); }
+.new-issue {
+  display: flex; flex-direction: column; gap: 8px; margin-bottom: 12px;
+  background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: 12px;
+}
+.ni-title, .ni-body {
+  background: var(--bg); border: 1px solid var(--border); border-radius: 6px;
+  color: var(--text); padding: 9px 11px; font-family: inherit; font-size: 13px;
+}
+.ni-title:focus, .ni-body:focus { outline: none; border-color: var(--accent); }
+.ni-body { min-height: 90px; resize: vertical; }
+.ni-actions { display: flex; gap: 8px; justify-content: flex-end; align-items: center; }
+
+.issue-labels { display: flex; gap: 6px; flex-wrap: wrap; padding: 12px 22px 0; }
+.issue-body { overflow-y: auto; padding: 14px 22px; }
+.issue-md {
+  margin: 0; white-space: pre-wrap; word-break: break-word; font-family: inherit;
+  font-size: 14px; line-height: 1.6; color: var(--text);
+}
+
 .muted { color: var(--muted); font-size: 12px; }
 .pad { padding: 16px; }
 .empty, .error { padding: 24px; color: var(--muted); }

@@ -5,6 +5,7 @@ import * as github from './github.js'
 import * as runner from './runner.js'
 import * as questions from './questions.js'
 import * as git from './git.js'
+import * as localIssues from './localIssues.js'
 import { bus, listTasks, getTask, createTask, findActiveByIssue } from './tasks.js'
 
 const app = express()
@@ -27,8 +28,48 @@ app.get('/api/health', handle(async () => ({ ok: true, ts: Date.now() })))
 app.get('/api/repos', handle((req) =>
   github.listRepos({ limit: Number(req.query.limit) || 100 })))
 
-app.get('/api/repos/:owner/:repo/issues', handle((req) =>
-  github.listIssues(req.params.owner, req.params.repo)))
+// Backlog = local drafts (first) + GitHub issues.
+app.get('/api/repos/:owner/:repo/issues', handle(async (req) => {
+  const { owner, repo } = req.params
+  const [remote, local] = await Promise.all([
+    github.listIssues(owner, repo),
+    localIssues.list(`${owner}/${repo}`),
+  ])
+  return [...local, ...remote]
+}))
+
+// Save a backlog item locally (not posted to GitHub).
+app.post('/api/repos/:owner/:repo/issues/local', handle(async (req) => {
+  const { title, body } = req.body || {}
+  if (!title?.trim()) throw new Error('title is required')
+  return localIssues.create(`${req.params.owner}/${req.params.repo}`, { title: title.trim(), body })
+}))
+
+// Create a backlog item directly on GitHub.
+app.post('/api/repos/:owner/:repo/issues', handle(async (req) => {
+  const { title, body } = req.body || {}
+  if (!title?.trim()) throw new Error('title is required')
+  const url = await github.createIssue(req.params.owner, req.params.repo, { title: title.trim(), body })
+  return { url }
+}))
+
+// Promote a local draft to a real GitHub issue.
+app.post('/api/repos/:owner/:repo/issues/local/:id/post', handle(async (req) => {
+  const item = await localIssues.get(req.params.id)
+  if (!item) throw new Error('local issue not found')
+  const url = await github.createIssue(req.params.owner, req.params.repo, { title: item.title, body: item.body })
+  await localIssues.remove(req.params.id)
+  return { url }
+}))
+
+app.delete('/api/repos/:owner/:repo/issues/local/:id', handle(async (req) => {
+  await localIssues.remove(req.params.id)
+  return { ok: true }
+}))
+
+// Detail (incl. body) for a GitHub issue.
+app.get('/api/repos/:owner/:repo/issues/:number', handle((req) =>
+  github.getIssue(req.params.owner, req.params.repo, req.params.number)))
 
 app.get('/api/repos/:owner/:repo/pulls', handle((req) =>
   github.listPulls(req.params.owner, req.params.repo)))
@@ -42,13 +83,13 @@ app.get('/api/repos/:owner/:repo/pulls/:number/diff', handle(async (req) =>
 // immediately; the plan chat streams over /api/stream.
 app.post('/api/repos/:owner/:repo/plan', handle(async (req) => {
   const { owner, repo } = req.params
-  const { issueNumber, issueTitle, model, defaultBranch } = req.body
+  const { issueNumber, issueTitle, model, defaultBranch, local, body } = req.body
   if (!issueNumber) throw new Error('issueNumber is required')
   // Dedupe: if a plan/run is already in flight for this issue, return it
   // instead of spawning a second agent.
   const existing = await findActiveByIssue(owner, repo, issueNumber)
   if (existing) return { ...existing, deduped: true }
-  const task = await createTask({ owner, repo, issueNumber, issueTitle, model })
+  const task = await createTask({ owner, repo, issueNumber, issueTitle, model, local: !!local, body })
   runner.startPlan(task, { defaultBranch }).catch((e) => console.error('startPlan crashed', e))
   return task
 }))

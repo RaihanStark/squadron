@@ -22,7 +22,7 @@ IMPORTANT: Stay strictly inside your current working directory. Use relative pat
 
 Investigate the relevant code and propose a concrete implementation plan for this issue. Keep it tight and skimmable.
 
---- ISSUE #${issue.number}: ${issue.title} ---
+--- ISSUE${issue.number ? ` #${issue.number}` : ' (local draft)'}: ${issue.title} ---
 ${issue.body || '(no description provided)'}
 --- END ISSUE ---`
 }
@@ -30,7 +30,7 @@ ${issue.body || '(no description provided)'}
 function executePrompt(owner, repo, issue, plan) {
   return `You are an autonomous engineer working in a fresh git worktree of ${owner}/${repo}. The repo is checked out in your working directory.
 
-Implement the following approved plan to resolve issue #${issue.number} ("${issue.title}"). Follow the plan; use judgement on the details.
+Implement the following approved plan for "${issue.title}"${issue.number ? ` (resolves issue #${issue.number})` : ''}. Follow the plan; use judgement on the details.
 
 --- APPROVED PLAN ---
 ${plan}
@@ -48,8 +48,7 @@ Guidelines:
 function prBody(issue, summary, plan) {
   return `${summary || 'Automated change.'}
 
-Resolves #${issue.number}
-
+${issue.number ? `Resolves #${issue.number}\n` : ''}
 <details><summary>📋 Approved plan</summary>
 
 ${plan || '(none)'}
@@ -65,8 +64,9 @@ export async function startPlan(task, { defaultBranch } = {}) {
   const { id, owner, repo, issueNumber, model } = task
   try {
     await updateTask(id, { status: 'preparing' })
-    addEvent(id, { kind: 'status', text: `Fetching issue #${issueNumber}…` })
-    const issue = await gh.getIssue(owner, repo, issueNumber)
+    const issue = task.local
+      ? { number: null, title: task.issueTitle, body: task.body || '(no description)' }
+      : (addEvent(id, { kind: 'status', text: `Fetching issue #${issueNumber}…` }), await gh.getIssue(owner, repo, issueNumber))
 
     addEvent(id, { kind: 'status', text: 'Preparing isolated worktree…' })
     const { path: wt, branch, base } = await git.createWorktree(owner, repo, id, defaultBranch)
@@ -141,8 +141,10 @@ export async function approve(taskId) {
       await updateTask(taskId, { status: 'interrupted' })
       return false
     }
-    addEvent(taskId, { kind: 'status', text: 'Resuming after restart — re-fetching issue…' })
-    const issue = await gh.getIssue(task.owner, task.repo, task.issueNumber)
+    addEvent(taskId, { kind: 'status', text: 'Resuming after restart…' })
+    const issue = task.local
+      ? { number: null, title: task.issueTitle, body: task.body || '' }
+      : await gh.getIssue(task.owner, task.repo, task.issueNumber)
     ctx = {
       id: taskId, owner: task.owner, repo: task.repo, issue,
       wt: git.worktreePathFor(taskId), branch: task.branch, base: task.base,
@@ -206,7 +208,7 @@ async function finalize(ctx, res) {
   }
   addEvent(id, { kind: 'status', text: 'Committing changes locally…' })
   await updateTask(id, { status: 'committing', summary: res.summary, costUsd: res.costUsd })
-  const committed = await git.commitAll(wt, `${issue.title}\n\nResolves #${issue.number}`)
+  const committed = await git.commitAll(wt, issue.number ? `${issue.title}\n\nResolves #${issue.number}` : issue.title)
   if (!committed) {
     addEvent(id, { kind: 'status', text: 'No file changes produced.' })
     await updateTask(id, { status: 'no_changes' })
@@ -236,7 +238,9 @@ export async function pushTask(taskId) {
 
     addEvent(taskId, { kind: 'status', text: 'Opening pull request…' })
     await updateTask(taskId, { status: 'opening_pr' })
-    const issue = await gh.getIssue(owner, repo, issueNumber)
+    const issue = task.local
+      ? { number: null, title: task.issueTitle }
+      : await gh.getIssue(owner, repo, issueNumber)
     const prUrl = await gh.createPr(owner, repo, {
       head: branch, base, title: issue.title, body: prBody(issue, task.summary, task.plan),
     })

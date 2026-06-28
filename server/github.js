@@ -61,6 +61,11 @@ export function listPulls(owner, repo, { limit = 100 } = {}) {
   ])
 }
 
+// Create a GitHub issue. Returns the issue URL.
+export function createIssue(owner, repo, { title, body }) {
+  return ghRaw(['issue', 'create', '--repo', `${owner}/${repo}`, '--title', title, '--body', body || ''])
+}
+
 // Full detail (incl. body) for a single issue — used to brief the agent.
 export function getIssue(owner, repo, number) {
   return gh([

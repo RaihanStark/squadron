@@ -17,6 +17,7 @@ const L = (name, color) => ({ name, color })
 
 export const issuesByRepo = {
   'acme/financy': [
+    { id: 'Ldemo1', local: true, number: null, title: 'Dark-mode toggle in settings', labels: [], comments: 0, updatedAt: ago(5), url: null, body: 'Add a toggle in Settings to switch between light and dark themes, persisted to the config file. (Drafted locally in Squadron — not yet on GitHub.)' },
     { number: 3, title: 'Add password encryption for the local vault', labels: [L('enhancement', '3fb950'), L('security', 'd73a4a')], comments: 4, updatedAt: ago(60), url: '#' },
     { number: 22, title: 'Release to Flathub', labels: [L('packaging', '0e8a16')], comments: 1, updatedAt: ago(220), url: '#' },
     { number: 31, title: 'Dark mode flickers on startup', labels: [L('bug', 'd73a4a'), L('ui', 'a2eeef')], comments: 2, updatedAt: ago(900), url: '#' },
@@ -160,7 +161,16 @@ export const changeTask = {
   events: [],
 }
 
-export function demoApi(path) {
+export function demoApi(path, opts) {
+  if (/\/issues\/local/.test(path) && opts?.method === 'POST') return Promise.resolve({ id: 'Ldemo', local: true, title: 'Draft', body: '' })
+  const detail = path.match(/\/issues\/(\d+)$/)
+  if (detail) {
+    for (const arr of Object.values(issuesByRepo)) {
+      const f = arr.find((i) => String(i.number) === detail[1])
+      if (f) return Promise.resolve({ ...f, body: f.body || 'This is demo issue text. In a real repo this is the issue body fetched from GitHub.' })
+    }
+    return Promise.resolve({ number: Number(detail[1]), title: '', body: '(demo)', labels: [] })
+  }
   if (/\/tasks\/tchg\/diff$/.test(path)) return Promise.resolve({ diff: CHANGE_DIFF })
   if (/\/pulls\/\d+\/diff$/.test(path)) return Promise.resolve({ diff: DEMO_DIFF })
   if (path === '/api/repos') return Promise.resolve(repos)

@@ -49,6 +49,7 @@ export default function App() {
   const [view, setView] = useState(PARAMS.get('view') === 'agents' ? 'agents' : 'repo') // 'repo' | 'agents' | 'pr'
   const [selectedPr, setSelectedPr] = useState(null) // { repo, pr }
   const [selectedChange, setSelectedChange] = useState(null) // taskId of a changes_ready task
+  const [selectedIssue, setSelectedIssue] = useState(null) // { repo, issue }
 
   // Tasks keyed by id, kept live via SSE.
   const [tasks, setTasks] = useState({})
@@ -113,8 +114,10 @@ export default function App() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          issueNumber: issue.number,
+          issueNumber: issue.number ?? issue.id,
           issueTitle: issue.title,
+          local: !!issue.local,
+          body: issue.body,
           defaultBranch: repoObj.defaultBranchRef?.name,
           model,
         }),
@@ -158,6 +161,11 @@ export default function App() {
     setView('changes')
   }
 
+  function openIssue(repoObj, issue) {
+    setSelectedIssue({ repo: repoObj, issue })
+    setView('issue')
+  }
+
   return (
     <div className="app">
       <header className="topbar">
@@ -195,6 +203,10 @@ export default function App() {
         <main className="main">
           {view === 'agents' ? (
             <AgentsPanel tasks={taskList} selected={selectedTask} setSelected={setSelectedTask} onOpenChanges={openChanges} />
+          ) : view === 'issue' && selectedIssue ? (
+            <IssueDetail repo={selectedIssue.repo} issue={selectedIssue.issue}
+              task={taskList.find((t) => `${t.owner}/${t.repo}` === selectedIssue.repo.nameWithOwner && (t.kind || 'plan') !== 'review' && t.issueNumber == (selectedIssue.issue.number ?? selectedIssue.issue.id))}
+              onDispatch={dispatch} onOpenTask={openTask} onBack={() => setView('repo')} />
           ) : view === 'changes' && selectedChange ? (
             <ChangesDetail task={taskList.find((t) => t.id === selectedChange)} onBack={() => setView('repo')} />
           ) : view === 'pr' && selectedPr ? (
@@ -206,7 +218,7 @@ export default function App() {
               onBack={() => setView('repo')}
             />
           ) : activeRepo ? (
-            <RepoView key={active} repo={activeRepo} tab={tab} setTab={setTab} onDispatch={dispatch} onReview={review} onOpenTask={openTask} onOpenPr={openPr} onOpenChanges={openChanges} tasks={taskList} />
+            <RepoView key={active} repo={activeRepo} tab={tab} setTab={setTab} onDispatch={dispatch} onReview={review} onOpenTask={openTask} onOpenPr={openPr} onOpenChanges={openChanges} onOpenIssue={openIssue} tasks={taskList} />
           ) : (
             <div className="empty">Select a repo to begin.</div>
           )}
@@ -216,15 +228,18 @@ export default function App() {
   )
 }
 
-function RepoView({ repo, tab, setTab, onDispatch, onReview, onOpenTask, onOpenPr, onOpenChanges, tasks }) {
+function RepoView({ repo, tab, setTab, onDispatch, onReview, onOpenTask, onOpenPr, onOpenChanges, onOpenIssue, tasks }) {
   const [owner, name] = repo.nameWithOwner.split('/')
   const [issues, setIssues] = useState(null)
   const [pulls, setPulls] = useState(null)
   const [error, setError] = useState(null)
+  const [creating, setCreating] = useState(false)
+
+  const loadIssues = () => api(`/api/repos/${owner}/${name}/issues`).then(setIssues).catch((e) => setError(e.message))
 
   useEffect(() => {
-    setIssues(null); setPulls(null); setError(null)
-    api(`/api/repos/${owner}/${name}/issues`).then(setIssues).catch((e) => setError(e.message))
+    setIssues(null); setPulls(null); setError(null); setCreating(false)
+    loadIssues()
     api(`/api/repos/${owner}/${name}/pulls`).then(setPulls).catch((e) => setError(e.message))
   }, [repo.nameWithOwner])
 
@@ -259,12 +274,18 @@ function RepoView({ repo, tab, setTab, onDispatch, onReview, onOpenTask, onOpenP
 
       <div className="list">
         {tab === 'backlog' && (
-          issues === null ? <div className="muted pad">Loading missions…</div>
-            : !issues.length ? <div className="muted pad">No open issues. Clear skies. ✦</div>
-            : issues.map((it) => (
-              <IssueRow key={it.number} issue={it} task={taskByIssue[it.number]} onOpenTask={onOpenTask}
-                onDispatch={(i, model) => onDispatch(repo, i, model)} />
-            ))
+          <>
+            {creating
+              ? <NewIssueForm repo={repo} onClose={() => setCreating(false)} onCreated={() => { setCreating(false); loadIssues() }} />
+              : <button className="new-issue-btn" onClick={() => setCreating(true)}>+ New backlog item</button>}
+            {issues === null ? <div className="muted pad">Loading missions…</div>
+              : !issues.length ? <div className="muted pad">No open issues yet.</div>
+              : issues.map((it) => {
+                const key = it.number ?? it.id
+                return <IssueRow key={key} issue={it} task={taskByIssue[key]} onOpenTask={onOpenTask}
+                  onOpenIssue={() => onOpenIssue(repo, it)} onDispatch={(i, model) => onDispatch(repo, i, model)} />
+              })}
+          </>
         )}
 
         {tab === 'review' && (
@@ -303,7 +324,7 @@ function PrCard({ pr, task, onOpenPr, cta }) {
   )
 }
 
-function IssueRow({ issue: it, task, onDispatch, onOpenTask }) {
+function IssueRow({ issue: it, task, onDispatch, onOpenTask, onOpenIssue }) {
   const [model, setModel] = useState('opus')
   // An in-flight task owns this issue — show its live status and a way to jump
   // to it, rather than offering a second Plan (which the backend would dedupe).
@@ -311,27 +332,27 @@ function IssueRow({ issue: it, task, onDispatch, onOpenTask }) {
   const verb = task?.status === 'planning' ? 'planning…'
     : task?.status === 'planned' ? 'plan ready'
     : task?.status === 'waiting' ? 'needs you'
+    : task?.status === 'changes_ready' ? 'changes ready'
     : 'in progress'
+  const stop = (e) => e.stopPropagation()
   return (
-    <div className="card">
+    <div className="card card-click" onClick={onOpenIssue}>
       <div className="card-main">
-        <a className="num" href={it.url} target="_blank" rel="noreferrer">#{it.number}</a>
+        {it.local ? <span className="badge local-badge">draft</span> : <span className="num">#{it.number}</span>}
         <span className="title">{it.title}</span>
       </div>
       <div className="card-meta">
         {it.labels?.map((l) => (
           <span key={l.name} className="label" style={{ '--c': `#${l.color}` }}>{l.name}</span>
         ))}
-        <span className="muted">{it.comments} 💬 · {timeAgo(it.updatedAt)}</span>
-        {/* Don't assert PR state from a single stale task — an issue can have many
-            PRs, and we don't poll their status. The #number links to GitHub for that. */}
+        <span className="muted">{it.local ? 'local draft' : `${it.comments} 💬`} · {timeAgo(it.updatedAt)}</span>
         {task && task.status !== 'pr_open' && <StatusBadge status={task.status} />}
         {inflight ? (
-          <button className="dispatch view-btn" onClick={() => onOpenTask(task.id)}>
+          <button className="dispatch view-btn" onClick={(e) => { stop(e); onOpenTask(task.id) }}>
             👁 View {verb}
           </button>
         ) : (
-          <>
+          <span className="row-actions" onClick={stop}>
             <select
               className="model-select"
               value={model}
@@ -343,10 +364,112 @@ function IssueRow({ issue: it, task, onDispatch, onOpenTask }) {
               <option value="haiku">Haiku</option>
             </select>
             <button className="dispatch" onClick={() => onDispatch(it, model)}>📋 Plan</button>
-          </>
+          </span>
         )}
       </div>
     </div>
+  )
+}
+
+function NewIssueForm({ repo, onClose, onCreated }) {
+  const [owner, name] = repo.nameWithOwner.split('/')
+  const [title, setTitle] = useState('')
+  const [body, setBody] = useState('')
+  const [busy, setBusy] = useState(false)
+
+  async function save(toGitHub) {
+    if (!title.trim()) return
+    setBusy(true)
+    try {
+      await api(`/api/repos/${owner}/${name}/issues${toGitHub ? '' : '/local'}`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ title: title.trim(), body }),
+      })
+      onCreated()
+    } catch (e) { alert('Failed: ' + e.message) }
+    finally { setBusy(false) }
+  }
+
+  return (
+    <div className="new-issue">
+      <input className="ni-title" placeholder="Title" value={title} autoFocus onChange={(e) => setTitle(e.target.value)} />
+      <textarea className="ni-body" placeholder="Description (markdown)…" value={body} onChange={(e) => setBody(e.target.value)} />
+      <div className="ni-actions">
+        <button className="link-btn" onClick={onClose}>Cancel</button>
+        <button className="dispatch" disabled={busy || !title.trim()} onClick={() => save(false)} title="Keep it in Squadron only">
+          💾 Save locally
+        </button>
+        <button className="approve-btn" disabled={busy || !title.trim()} onClick={() => save(true)} title="Create the issue on GitHub">
+          {busy ? 'Saving…' : '🐙 Create on GitHub'}
+        </button>
+      </div>
+    </div>
+  )
+}
+
+function IssueDetail({ repo, issue, task, onDispatch, onOpenTask, onBack }) {
+  const [owner, name] = repo.nameWithOwner.split('/')
+  const [model, setModel] = useState('opus')
+  const [full, setFull] = useState(issue.local ? issue : null)
+  const [error, setError] = useState(null)
+  const [acting, setActing] = useState(false)
+
+  useEffect(() => {
+    if (issue.local) { setFull(issue); return }
+    setFull(null); setError(null)
+    api(`/api/repos/${owner}/${name}/issues/${issue.number}`).then(setFull).catch((e) => setError(e.message))
+  }, [repo.nameWithOwner, issue.number, issue.id])
+
+  const inflight = task && ACTIVE.has(task.status)
+
+  async function postToGitHub() {
+    setActing(true)
+    try { const r = await api(`/api/repos/${owner}/${name}/issues/local/${issue.id}/post`, { method: 'POST' }); window.open(r.url, '_blank'); onBack() }
+    catch (e) { alert('Failed: ' + e.message) } finally { setActing(false) }
+  }
+  async function del() {
+    if (!confirm('Delete this local draft?')) return
+    try { await api(`/api/repos/${owner}/${name}/issues/local/${issue.id}`, { method: 'DELETE' }); onBack() } catch (e) { alert(e.message) }
+  }
+
+  return (
+    <>
+      <div className="main-head pr-head">
+        <div>
+          <button className="link-btn" onClick={onBack}>← back</button>
+          <h1>
+            {issue.local ? <span className="badge local-badge">draft</span> : <a href={issue.url} target="_blank" rel="noreferrer">#{issue.number}</a>}
+            {' '}{issue.title}
+          </h1>
+        </div>
+        <div className="agent-actions">
+          {issue.local && <button className="cancel" onClick={del}>Delete</button>}
+          {issue.local && <button className="dispatch" disabled={acting} onClick={postToGitHub}>{acting ? '…' : '🐙 Post to GitHub'}</button>}
+          {inflight ? (
+            <button className="approve-btn" onClick={() => onOpenTask(task.id)}>👁 View run →</button>
+          ) : (
+            <>
+              <select className="model-select" value={model} onChange={(e) => setModel(e.target.value)} title="Model">
+                <option value="opus">Opus</option><option value="sonnet">Sonnet</option><option value="haiku">Haiku</option>
+              </select>
+              <button className="approve-btn" onClick={() => onDispatch(repo, issue, model)}>📋 Plan</button>
+            </>
+          )}
+        </div>
+      </div>
+
+      {full?.labels?.length ? (
+        <div className="issue-labels">{full.labels.map((l) => (
+          <span key={l.name} className="label" style={{ '--c': `#${l.color || '888'}` }}>{l.name}</span>
+        ))}</div>
+      ) : null}
+
+      <div className="issue-body">
+        {error && <div className="error pad">⚠ {error}</div>}
+        {full === null && !error && <div className="muted pad">Loading…</div>}
+        {full && <pre className="issue-md">{full.body || '(no description)'}</pre>}
+      </div>
+    </>
   )
 }
 
