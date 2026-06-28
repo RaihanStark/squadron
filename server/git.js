@@ -12,7 +12,9 @@ import path from 'node:path'
 const run = promisify(execFile)
 // Live OUTSIDE the project tree, so an agent's worktree is never nested inside
 // (or adjacent to) Squadron's own source — part of keeping agents confined.
-export const DATA_DIR = path.join(os.homedir(), '.squadron')
+// Overridable via SQUADRON_DATA_DIR so a previewed Squadron uses isolated data
+// instead of colliding with the real instance's ~/.squadron.
+export const DATA_DIR = process.env.SQUADRON_DATA_DIR || path.join(os.homedir(), '.squadron')
 const REPOS_DIR = path.join(DATA_DIR, 'repos')
 const WORKTREES_DIR = path.join(DATA_DIR, 'worktrees')
 

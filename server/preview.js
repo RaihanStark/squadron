@@ -5,10 +5,22 @@
 // and we stream logs. One preview process per task.
 import { spawn } from 'node:child_process'
 import { existsSync, readFileSync } from 'node:fs'
+import net from 'node:net'
+import os from 'node:os'
 import path from 'node:path'
 import { worktreePathFor } from './git.js'
 import { getTask } from './tasks.js'
 import * as runConfig from './runConfig.js'
+
+// An OS-assigned free port.
+function freePort() {
+  return new Promise((resolve, reject) => {
+    const s = net.createServer()
+    s.unref()
+    s.on('error', reject)
+    s.listen(0, () => { const { port } = s.address(); s.close(() => resolve(port)) })
+  })
+}
 
 const previews = new Map() // taskId -> { status, url, logs, proc, command, source }
 
@@ -92,18 +104,32 @@ export async function start(taskId) {
       log(taskId, '$ npm install   (first run for this worktree)')
       await runInstall(taskId, wt)
     }
+    // Run in an ISOLATED environment so a previewed app (notably Squadron
+    // itself) doesn't collide with the real instance — its own free ports and
+    // its own data dir. These env vars are harmless to apps that ignore them.
+    const [apiPort, webPort] = await Promise.all([freePort(), freePort()])
+    const env = {
+      ...process.env,
+      BROWSER: 'none', FORCE_COLOR: '1',
+      PORT: String(apiPort),                                   // backend (PORT convention)
+      VITE_PORT: String(webPort),                              // frontend dev server
+      VITE_API_TARGET: `http://localhost:${apiPort}`,          // proxy → this preview's backend
+      SQUADRON_DATA_DIR: path.join(os.tmpdir(), `squadron-preview-${taskId}`), // isolated ~/.squadron
+    }
     p.status = 'starting'
-    log(taskId, `$ ${resolved.command}`)
-    const proc = spawn('sh', ['-c', resolved.command], {
-      cwd: wt, detached: true, env: { ...process.env, BROWSER: 'none', FORCE_COLOR: '1' },
-    })
+    log(taskId, `$ ${resolved.command}   (isolated · ports ${webPort}/${apiPort})`)
+    const proc = spawn('sh', ['-c', resolved.command], { cwd: wt, detached: true, env })
     p.proc = proc
     const onData = (d) => {
       for (const line of d.toString().split('\n')) {
         if (!line.trim()) continue
         log(taskId, line)
         const m = line.match(/https?:\/\/(?:localhost|127\.0\.0\.1|0\.0\.0\.0):\d+\S*/)
-        if (m && !p.url) { p.url = m[0].replace('0.0.0.0', 'localhost'); p.status = 'running' }
+        if (m) {
+          const url = m[0].replace('0.0.0.0', 'localhost')
+          // A "Local:" line (vite/CRA/next) is the web app — prefer it over an API URL.
+          if (/local/i.test(line) || !p.url) { p.url = url; p.status = 'running' }
+        }
       }
     }
     proc.stdout.on('data', onData)
