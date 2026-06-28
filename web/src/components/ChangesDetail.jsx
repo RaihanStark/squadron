@@ -103,7 +103,7 @@ export default function ChangesDetail({ task, onBack }) {
           ) : (
             <button className="cancel" onClick={() => setConfirmingDiscard(true)}>Discard</button>
           ))}
-          {ready && <button className="approve-btn" disabled={pushing} onClick={push}>{pushing ? 'Pushing…' : '⬆ Push & Open PR'}</button>}
+          {ready && <button className="approve-btn" disabled={pushing} onClick={push}>{pushing ? 'Pushing…' : (task.kind === 'resolve' ? '⬆ Push to PR' : '⬆ Push & Open PR')}</button>}
           {task.prUrl && <a className="dispatch" href={task.prUrl} target="_blank" rel="noreferrer">Open PR ↗</a>}
         </div>
       </div>

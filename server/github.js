@@ -103,7 +103,7 @@ export function getPr(owner, repo, number) {
   return gh([
     'pr', 'view', String(number),
     '--repo', `${owner}/${repo}`,
-    '--json', 'number,title,body,headRefName,baseRefName,url,additions,deletions,isDraft,mergeable,mergeStateStatus,statusCheckRollup',
+    '--json', 'number,title,body,headRefName,baseRefName,url,additions,deletions,isDraft,mergeable,mergeStateStatus,statusCheckRollup,isCrossRepository,headRepositoryOwner',
   ])
 }
 

@@ -191,6 +191,20 @@ app.post('/api/repos/:owner/:repo/review', handle(async (req) => {
   return task
 }))
 
+// Start an AI merge-conflict resolution for a PR. Merges base into the head in
+// an isolated worktree, has the agent resolve the conflicts, then waits for
+// operator review before pushing back to the PR's branch. Streams over /api/stream.
+app.post('/api/repos/:owner/:repo/resolve', handle(async (req) => {
+  const { owner, repo } = req.params
+  const { prNumber, prTitle, model } = req.body
+  if (!prNumber) throw new Error('prNumber is required')
+  const existing = await findActiveByIssue(owner, repo, prNumber, 'resolve')
+  if (existing) return { ...existing, deduped: true }
+  const task = await createTask({ owner, repo, issueNumber: prNumber, issueTitle: prTitle, model, kind: 'resolve' })
+  runner.startResolve(task).catch((e) => console.error('startResolve crashed', e))
+  return task
+}))
+
 // Start a plan-less interactive "errand": a quick task whose changes land in
 // Ready to Review without the plan/approve ceremony. Streams over /api/stream.
 app.post('/api/repos/:owner/:repo/errand', handle(async (req) => {

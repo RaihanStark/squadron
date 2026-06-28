@@ -147,6 +147,19 @@ export default function App() {
     } catch (e) { alert('Review failed: ' + e.message) }
   }
 
+  async function resolveConflicts(repoObj, pr, model) {
+    const [owner, repo] = repoObj.nameWithOwner.split('/')
+    try {
+      const task = await api(`/api/repos/${owner}/${repo}/resolve`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ prNumber: pr.number, prTitle: pr.title, model }),
+      })
+      setTasks((prev) => ({ ...prev, [task.id]: { ...(prev[task.id] || {}), ...task, events: prev[task.id]?.events || [] } }))
+      setSelectedTask(task.id)
+      setView('agents')
+    } catch (e) { alert('Resolve failed: ' + e.message) }
+  }
+
   // Plan-less "quick task": create an errand and surface it in the repo sidebar.
   async function startErrand(repoObj, instruction) {
     const [owner, repo] = repoObj.nameWithOwner.split('/')
@@ -218,7 +231,8 @@ export default function App() {
           ) : view === 'pr' && selectedPr ? (
             <PrDetail repo={selectedPr.repo} pr={selectedPr.pr}
               task={findTask((t) => `${t.owner}/${t.repo}` === selectedPr.repo.nameWithOwner && t.issueNumber === selectedPr.pr.number && (t.kind || 'plan') === 'review')}
-              onReview={review} onBack={backToRepo} />
+              resolveTask={findTask((t) => `${t.owner}/${t.repo}` === selectedPr.repo.nameWithOwner && t.issueNumber === selectedPr.pr.number && t.kind === 'resolve')}
+              onReview={review} onResolve={resolveConflicts} onOpenChanges={openChanges} onBack={backToRepo} />
           ) : activeRepo ? (
             <RepoView key={active} repo={activeRepo} tab={tab} setTab={setTab} onDispatch={dispatch} onReview={review}
               onOpenTask={openTask} onOpenPr={openPr} onOpenChanges={openChanges} onOpenIssue={openIssue} onStartErrand={startErrand} tasks={taskList} />
