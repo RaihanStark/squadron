@@ -8,7 +8,7 @@ import PrCard from './PrCard.jsx'
 import RepoErrand from './RepoErrand.jsx'
 import ReleasePanel from './ReleasePanel.jsx'
 
-export default function RepoView({ repo, tab, setTab, onDispatch, onReview, onOpenTask, onOpenPr, onOpenChanges, onOpenIssue, onStartErrand, tasks }) {
+export default function RepoView({ repo, tab, setTab, onDispatch, onReview, onOpenTask, onOpenPr, onOpenChanges, onOpenIssue, onStartErrand, onReleaseTask, tasks }) {
   const [owner, name] = repo.nameWithOwner.split('/')
   const [issues, setIssues] = useState(null)
   const [pulls, setPulls] = useState(null)
@@ -94,7 +94,7 @@ export default function RepoView({ repo, tab, setTab, onDispatch, onReview, onOp
               : <div className="muted pad">No open PRs.</div>
         )}
 
-        {tab === 'release' && <ReleasePanel repo={repo} />}
+        {tab === 'release' && <ReleasePanel repo={repo} onReleaseTask={onReleaseTask} />}
       </div>
       {errandOpen && <RepoErrand repo={repo} tasks={tasks} onStart={onStartErrand} onOpenChanges={onOpenChanges} />}
       </div>

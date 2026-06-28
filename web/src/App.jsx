@@ -171,6 +171,14 @@ export default function App() {
     return task
   }
 
+  // A release that bumps the version runs as an agent task — register it and jump
+  // to the Agents view so the operator can watch the bump → push → tag.
+  function onReleaseTask(task) {
+    setTasks((prev) => ({ ...prev, [task.id]: { ...(prev[task.id] || {}), ...task, events: prev[task.id]?.events || [] } }))
+    setSelectedTask(task.id)
+    setView('agents')
+  }
+
   const openTask = (taskId) => { setSelectedTask(taskId); setView('agents') }
   const openPr = (repoObj, pr) => { setSelectedPr({ repo: repoObj, pr }); setView('pr') }
   const openChanges = (taskId) => { setSelectedChange(taskId); setView('changes') }
@@ -235,7 +243,7 @@ export default function App() {
               onReview={review} onResolve={resolveConflicts} onOpenChanges={openChanges} onBack={backToRepo} />
           ) : activeRepo ? (
             <RepoView key={active} repo={activeRepo} tab={tab} setTab={setTab} onDispatch={dispatch} onReview={review}
-              onOpenTask={openTask} onOpenPr={openPr} onOpenChanges={openChanges} onOpenIssue={openIssue} onStartErrand={startErrand} tasks={taskList} />
+              onOpenTask={openTask} onOpenPr={openPr} onOpenChanges={openChanges} onOpenIssue={openIssue} onStartErrand={startErrand} onReleaseTask={onReleaseTask} tasks={taskList} />
           ) : (
             <div className="empty">{repos.length ? 'Select a repo to begin.' : 'Add a repo from the sidebar to begin.'}</div>
           )}

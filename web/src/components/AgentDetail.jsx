@@ -73,7 +73,7 @@ export default function AgentDetail({ task, onOpenChanges }) {
           {task.status === 'changes_ready' && onOpenChanges && (
             <button className="approve-btn" onClick={() => onOpenChanges(task.id)}>Review changes →</button>
           )}
-          {task.prUrl && <a className="dispatch" href={task.prUrl} target="_blank" rel="noreferrer">Open PR ↗</a>}
+          {task.prUrl && <a className="dispatch" href={task.prUrl} target="_blank" rel="noreferrer">{task.kind === 'release' ? 'Open release ↗' : 'Open PR ↗'}</a>}
         </div>
       </div>
 

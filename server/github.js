@@ -137,6 +137,14 @@ export async function postPrReview(owner, repo, number, payload) {
   return res.html_url || ''
 }
 
+// Extract the bare semver from a release tag (strips a leading `v`). Returns null
+// for anything that isn't a plain X.Y.Z — pre-release suffixes etc. are left for
+// the human, mirroring ReleasePanel.suggestNext on the client.
+export function parseVersion(tag) {
+  const m = String(tag || '').trim().match(/^v?(\d+\.\d+\.\d+)$/)
+  return m ? m[1] : null
+}
+
 // Recent releases for a repo — powers the Release tab + next-version suggestion.
 export function listReleases(owner, repo, { limit = 20 } = {}) {
   return gh([

@@ -176,6 +176,13 @@ export async function pushBranch(wt, branch) {
   await git(['push', '-u', 'origin', branch], wt)
 }
 
+// Push the worktree's current commit straight onto an existing remote branch
+// (e.g. a release version bump landing on the target branch). Fast-forward only —
+// fails loudly if origin/<target> has moved, rather than force-pushing.
+export async function pushToBranch(wt, target) {
+  await git(['push', 'origin', `HEAD:refs/heads/${target}`], wt)
+}
+
 // Remove a worktree once we're done (branch stays on origin via the PR).
 export async function removeWorktree(owner, repo, taskId) {
   const mirror = mirrorPath(owner, repo)
