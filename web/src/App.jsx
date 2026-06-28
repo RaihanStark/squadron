@@ -1,7 +1,9 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { api, DEMO, PARAMS } from './api.js'
 import { ACTIVE, NEEDS_YOU } from './constants.js'
 import { usePref, getPref, setPref } from './prefs.js'
+import { requestNotifyPermission, notifyTransition } from './notify.js'
+import NotifSettings from './components/NotifSettings.jsx'
 import Sidebar from './components/Sidebar.jsx'
 import RepoView from './components/RepoView.jsx'
 import AgentsPanel from './components/AgentsPanel.jsx'
@@ -23,6 +25,9 @@ export default function App() {
   // Tasks keyed by id, kept live via SSE.
   const [tasks, setTasks] = useState({})
   const [selectedTask, setSelectedTask] = useState(DEMO ? 'twait' : null)
+  // Last-seen status per task, so we can fire a desktop notification only on a
+  // genuine live transition (seeded on load/re-sync to avoid a startup burst).
+  const lastStatus = useRef({})
 
   // Fetch the curated fleet, sort by recency, and reconcile the active repo.
   const loadRepos = () =>
@@ -45,6 +50,9 @@ export default function App() {
     // Full re-sync from the server (events are persisted). Keep whichever event
     // list is longer so a re-sync never regresses live deltas we already hold.
     const fetchTasks = () => api('/api/tasks').then((list) => {
+      // Seed last-seen statuses so neither initial load nor an SSE reconnect
+      // re-sync (which has no replay) fires a flood of notifications.
+      for (const t of list) lastStatus.current[t.id] = t.status
       setTasks((prev) => {
         const next = { ...prev }
         for (const t of list) {
@@ -60,12 +68,28 @@ export default function App() {
 
     if (DEMO) return // no live stream in demo mode
 
+    requestNotifyPermission()
+
+    // Deep-link a clicked desktop notification back to the relevant view.
+    const navigate = (task) => {
+      if (task.status === 'changes_ready') { setSelectedChange(task.id); setView('changes') }
+      else { setSelectedTask(task.id); setView('agents') }
+    }
+
     const es = new EventSource('/api/stream')
     // Re-sync on every (re)connect so events emitted during a drop (e.g. a
     // server restart) aren't lost — SSE itself has no replay.
     es.onopen = () => fetchTasks()
     es.onmessage = (ev) => {
       const payload = JSON.parse(ev.data)
+      // Notify on real status transitions only (skip first sight / unchanged).
+      if (payload.type === 'task') {
+        const prevStatus = lastStatus.current[payload.id]
+        lastStatus.current[payload.id] = payload.task.status
+        if (prevStatus !== undefined && prevStatus !== payload.task.status) {
+          notifyTransition(payload.task, { onClick: navigate })
+        }
+      }
       setTasks((prev) => {
         const cur = prev[payload.id] || { id: payload.id, events: [] }
         if (payload.type === 'task') return { ...prev, [payload.id]: { ...cur, ...payload.task, events: cur.events || [] } }
@@ -174,6 +198,7 @@ export default function App() {
         >
           ⚡ Agents{activeCount ? ` · ${activeCount} active` : ''}{waitingCount ? ` · ${waitingCount} needs you` : ''}
         </button>
+        <NotifSettings />
       </header>
 
       <div className="body">
