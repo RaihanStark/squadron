@@ -4,7 +4,7 @@
 // a Go/Fyne app) the process just runs — a native window opens on the host —
 // and we stream logs. One preview process per task.
 import { spawn } from 'node:child_process'
-import { existsSync, readFileSync } from 'node:fs'
+import { existsSync, readFileSync, readdirSync } from 'node:fs'
 import net from 'node:net'
 import os from 'node:os'
 import path from 'node:path'
@@ -78,15 +78,56 @@ export async function getState(taskId) {
   return { status: 'stopped', url: null, logs: [], command: r?.command || null, source: r?.source || null }
 }
 
-function runInstall(taskId, wt) {
+function runInstall(taskId, dir) {
   return new Promise((resolve) => {
-    const proc = spawn('npm', ['install'], { cwd: wt, env: process.env })
+    const proc = spawn('npm', ['install'], { cwd: dir, env: process.env })
     const onData = (d) => { for (const l of d.toString().split('\n')) if (l.trim()) log(taskId, l) }
     proc.stdout.on('data', onData)
     proc.stderr.on('data', onData)
     proc.on('exit', () => resolve())
     proc.on('error', (e) => { log(taskId, 'npm install failed: ' + e.message); resolve() })
   })
+}
+
+const readPkg = (dir) => { try { return JSON.parse(readFileSync(path.join(dir, 'package.json'), 'utf8')) } catch { return null } }
+const hasDeps = (pkg) => pkg && (Object.keys(pkg.dependencies || {}).length || Object.keys(pkg.devDependencies || {}).length)
+
+// Sub-package dirs that need their own install (e.g. a monorepo's web/, or
+// packages/*, apps/*). Skipped when the root uses npm workspaces.
+function findSubPackages(wt) {
+  const out = []
+  const skip = new Set(['node_modules', '.git', 'dist', 'build', '.next', 'coverage', 'vendor'])
+  const bases = [wt, path.join(wt, 'packages'), path.join(wt, 'apps'), path.join(wt, 'services')]
+  for (const base of bases) {
+    let entries
+    try { entries = readdirSync(base, { withFileTypes: true }) } catch { continue }
+    for (const e of entries) {
+      if (!e.isDirectory() || skip.has(e.name) || e.name.startsWith('.')) continue
+      const sub = path.join(base, e.name)
+      if (sub === wt) continue
+      const pkg = readPkg(sub)
+      if (hasDeps(pkg)) out.push(sub)
+      if (out.length >= 8) return out // sanity cap
+    }
+  }
+  return out
+}
+
+// Install deps for an npm project, monorepo-aware: root first, then any
+// sub-packages that have their own deps (unless the root uses workspaces).
+async function ensureDeps(taskId, wt) {
+  const rootPkg = readPkg(wt)
+  if (!rootPkg) return
+  if (!existsSync(path.join(wt, 'node_modules'))) {
+    log(taskId, '$ npm install   (root)')
+    await runInstall(taskId, wt)
+  }
+  if (rootPkg.workspaces) return // `npm install` already linked all workspaces
+  for (const dir of findSubPackages(wt)) {
+    if (existsSync(path.join(dir, 'node_modules'))) continue
+    log(taskId, `$ npm install   (${path.relative(wt, dir)})`)
+    await runInstall(taskId, dir)
+  }
 }
 
 export async function start(taskId) {
@@ -100,9 +141,9 @@ export async function start(taskId) {
   previews.set(taskId, p)
 
   ;(async () => {
-    if (/^npm /.test(resolved.command) && !existsSync(path.join(wt, 'node_modules'))) {
-      log(taskId, '$ npm install   (first run for this worktree)')
-      await runInstall(taskId, wt)
+    // npm-based command on a fresh worktree → install root + sub-package deps.
+    if (/\bnpm\b/.test(resolved.command) && existsSync(path.join(wt, 'package.json'))) {
+      await ensureDeps(taskId, wt)
     }
     // Run in an ISOLATED environment so a previewed app (notably Squadron
     // itself) doesn't collide with the real instance — its own free ports and
