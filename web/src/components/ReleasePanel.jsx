@@ -16,7 +16,7 @@ function suggestNext(tag) {
 // The Release tab: cut a tagged GitHub Release for the repo in one click. The
 // pushed tag fires the repo's own release workflow (the exact thing that doesn't
 // happen when you only bump a version field in a file).
-export default function ReleasePanel({ repo }) {
+export default function ReleasePanel({ repo, onReleaseTask }) {
   const [owner, name] = repo.nameWithOwner.split('/')
   const defaultBranch = repo.defaultBranchRef?.name || 'main'
 
@@ -27,6 +27,7 @@ export default function ReleasePanel({ repo }) {
   const [notes, setNotes] = useState('')
   const [genNotes, setGenNotes] = useState(true)
   const [prerelease, setPrerelease] = useState(false)
+  const [bumpVersion, setBumpVersion] = useState(true)
   const [busy, setBusy] = useState(false)
   const [created, setCreated] = useState(null)
 
@@ -40,21 +41,31 @@ export default function ReleasePanel({ repo }) {
 
   useEffect(() => {
     setReleases(null); setError(null); setCreated(null)
-    setTag(''); setTarget(defaultBranch); setNotes(''); setGenNotes(true); setPrerelease(false)
+    setTag(''); setTarget(defaultBranch); setNotes(''); setGenNotes(true); setPrerelease(false); setBumpVersion(true)
     load()
   }, [repo.nameWithOwner])
 
   async function create() {
     const t = tag.trim()
     if (!t) return
-    if (!confirm(`Cut release ${t} on ${owner}/${name} (target: ${target.trim() || defaultBranch})?\n\nThis pushes the ${t} tag and publishes a GitHub Release — triggering the repo's release workflow.`)) return
+    const tgt = target.trim() || defaultBranch
+    const bumpLine = bumpVersion
+      ? `\n\nAn AI agent will first bump the repo's version to match ${t} and push it to ${tgt}, then cut the release.`
+      : ''
+    if (!confirm(`Cut release ${t} on ${owner}/${name} (target: ${tgt})?\n\nThis pushes the ${t} tag and publishes a GitHub Release — triggering the repo's release workflow.${bumpLine}`)) return
     setBusy(true)
     try {
-      const { url } = await api(`/api/repos/${owner}/${name}/releases`, {
+      const res = await api(`/api/repos/${owner}/${name}/releases`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ tag: t, target: target.trim(), notes, generateNotes: genNotes, prerelease }),
+        body: JSON.stringify({ tag: t, target: target.trim(), notes, generateNotes: genNotes, prerelease, bumpVersion, defaultBranch }),
       })
-      setCreated(url)
+      // With a version bump the release runs as an agent task — hand off to the
+      // Agents view to watch it. Otherwise it's a one-shot { url } response.
+      if (bumpVersion) {
+        onReleaseTask?.(res)
+        return
+      }
+      setCreated(res.url)
       setNotes('')
       load()
     } catch (e) { alert('Release failed: ' + e.message) }
@@ -68,6 +79,9 @@ export default function ReleasePanel({ repo }) {
         <p className="muted release-hint">
           Creates the tag and publishes a GitHub Release. Pushing the tag triggers this repo's
           release workflow (building &amp; attaching artifacts) — no manual <code>git tag</code> needed.
+          With <em>Bump the version</em> on, an AI agent updates the repo's version manifests
+          (e.g. <code>package.json</code>) to match the tag and pushes that to the target branch first,
+          so the built artifact reports the right version.
         </p>
         <label className="release-field">
           <span>Tag</span>
@@ -76,6 +90,10 @@ export default function ReleasePanel({ repo }) {
         <label className="release-field">
           <span>Target branch</span>
           <input className="ni-title" placeholder={defaultBranch} value={target} onChange={(e) => setTarget(e.target.value)} />
+        </label>
+        <label className="release-check">
+          <input type="checkbox" checked={bumpVersion} onChange={(e) => setBumpVersion(e.target.checked)} />
+          Bump the version in the repo to match the tag (AI)
         </label>
         <label className="release-check">
           <input type="checkbox" checked={genNotes} onChange={(e) => setGenNotes(e.target.checked)} />

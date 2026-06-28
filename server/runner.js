@@ -171,6 +171,87 @@ export async function startErrand(task, { instruction, defaultBranch } = {}) {
   }
 }
 
+// --- Release phase ---
+//
+// Cut a tagged release, optionally bumping the repo's version first with the AI.
+// A plain `gh release create` tags the source as-is, so the built artifact keeps
+// the old version. Here we (optionally) run the agent to update every version
+// manifest on the target branch, push the bump, THEN create the release so the
+// tag — and the build it triggers — carries the right version.
+function releaseBumpMessage(owner, repo, version, tag, tree) {
+  return `You are an autonomous engineer preparing to cut release ${tag} of ${owner}/${repo}. The repo is checked out in a fresh git worktree at your working directory.
+
+Your ONLY task: update this project's version to ${version} so the released build reports the right version. Find every version manifest the repo actually uses and set its version to ${version}.
+
+Likely places — only touch the ones that exist: package.json (and nested ones like web/package.json), Cargo.toml, pyproject.toml / setup.py, version.py / __version__, build.gradle, *.csproj, etc. If a lockfile carries this package's own top-level version, update that field too, but do NOT run installers or regenerate lockfiles.
+
+Guidelines:
+- Make ONLY the version change — do not edit changelogs, source code, or anything unrelated.
+- You are already at the repo root. Use relative paths only; never cd elsewhere or touch other locations — those attempts are blocked.
+- Work in parallel: batch independent reads/greps into one step.
+- Do NOT commit, push, tag, or create a release — the harness handles all git and the GitHub release.
+- End with a 1-2 sentence summary listing exactly which files you changed.
+
+--- FILE TREE (${tree.total} files${tree.shown < tree.total ? `, first ${tree.shown}` : ''}) ---
+${tree.list}
+--- END FILE TREE ---`
+}
+
+export async function startRelease(task, { tag, target, title, notes, generateNotes, prerelease, bumpVersion, defaultBranch } = {}) {
+  const { id, owner, repo, model } = task
+  const branchTarget = (target && target.trim()) || defaultBranch || 'main'
+  const version = gh.parseVersion(tag)
+  const ac = new AbortController()
+  try {
+    await updateTask(id, { status: 'preparing' })
+    addEvent(id, { kind: 'status', text: 'Preparing isolated worktree…' })
+    const { path: wt } = await git.createWorktree(owner, repo, id, branchTarget)
+    sessions.set(id, { id, owner, repo, wt, ac, kind: 'release' })
+
+    if (bumpVersion && !version) {
+      addEvent(id, { kind: 'status', text: `Tag "${tag}" isn't a plain vX.Y.Z — skipping the automatic version bump.` })
+    } else if (bumpVersion) {
+      await updateTask(id, { status: 'running' })
+      addEvent(id, { kind: 'status', text: `Bumping version to ${version} on ${branchTarget}…` })
+      const tree = await git.trackedFiles(wt).catch(() => ({ total: 0, shown: 0, list: '(unavailable)' }))
+      await runExecution({
+        prompt: releaseBumpMessage(owner, repo, version, tag, tree),
+        cwd: wt, model, signal: ac.signal,
+        onEvent: (e) => e.kind === 'delta' ? streamText(id, e.text) : addEvent(id, e),
+      })
+      if (ac.signal.aborted) return // cancel() handles cleanup
+
+      addEvent(id, { kind: 'status', text: 'Committing version bump…' })
+      await updateTask(id, { status: 'committing' })
+      const committed = await git.commitAll(wt, `Release ${tag}: bump version to ${version}`)
+      if (committed) {
+        addEvent(id, { kind: 'status', text: `Pushing version bump to ${branchTarget}…` })
+        await updateTask(id, { status: 'pushing' })
+        await git.pushToBranch(wt, branchTarget)
+      } else {
+        addEvent(id, { kind: 'status', text: 'Version manifests already up to date — nothing to bump.' })
+      }
+    }
+
+    addEvent(id, { kind: 'status', text: `Cutting release ${tag}…` })
+    await updateTask(id, { status: 'releasing' })
+    const url = await gh.createRelease(owner, repo, {
+      tag, target: branchTarget, title: (title || '').trim() || undefined,
+      notes: (notes || '').trim() || undefined, generateNotes: !!generateNotes, prerelease: !!prerelease,
+    })
+    await updateTask(id, { status: 'released', prUrl: url })
+    addEvent(id, { kind: 'result', ok: true, text: `Release ${tag} published → ${url}` })
+    await git.removeWorktree(owner, repo, id)
+    sessions.delete(id)
+  } catch (err) {
+    console.error(`[release ${id}]`, err)
+    addEvent(id, { kind: 'error', text: err.message })
+    await updateTask(id, { status: 'error', error: err.message })
+    await git.removeWorktree(owner, repo, id).catch(() => {})
+    sessions.delete(id)
+  }
+}
+
 // Errand messages from the interactive session. Mirrors execution's mapping, but
 // on a finished turn we go IDLE (keeping the session warm) instead of finalizing —
 // the operator drives staging explicitly.
