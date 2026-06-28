@@ -100,6 +100,12 @@ body {
 .model-select:disabled { color: var(--muted); cursor: not-allowed; }
 .model-badge { text-transform: capitalize; color: #79c0ff; border: 1px solid var(--border); }
 
+.dispatch.view-btn {
+  background: var(--panel-2); color: var(--accent); border: 1px solid var(--accent-dim);
+  font-weight: 600;
+}
+.dispatch.view-btn:hover { border-color: var(--accent); }
+
 .muted { color: var(--muted); font-size: 12px; }
 .pad { padding: 16px; }
 .empty, .error { padding: 24px; color: var(--muted); }

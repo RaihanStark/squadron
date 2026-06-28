@@ -92,12 +92,17 @@ export default function App() {
           model,
         }),
       })
-      setTasks((prev) => ({ ...prev, [task.id]: { ...task, events: [] } }))
+      setTasks((prev) => ({ ...prev, [task.id]: { ...(prev[task.id] || {}), ...task, events: prev[task.id]?.events || [] } }))
       setSelectedTask(task.id)
       setView('agents')
     } catch (e) {
-      alert('Dispatch failed: ' + e.message)
+      alert('Plan failed: ' + e.message)
     }
+  }
+
+  function openTask(taskId) {
+    setSelectedTask(taskId)
+    setView('agents')
   }
 
   return (
@@ -138,7 +143,7 @@ export default function App() {
           {view === 'agents' ? (
             <AgentsPanel tasks={taskList} selected={selectedTask} setSelected={setSelectedTask} />
           ) : activeRepo ? (
-            <RepoView key={active} repo={activeRepo} tab={tab} setTab={setTab} onDispatch={dispatch} tasks={taskList} />
+            <RepoView key={active} repo={activeRepo} tab={tab} setTab={setTab} onDispatch={dispatch} onOpenTask={openTask} tasks={taskList} />
           ) : (
             <div className="empty">Select a repo to begin.</div>
           )}
@@ -148,7 +153,7 @@ export default function App() {
   )
 }
 
-function RepoView({ repo, tab, setTab, onDispatch, tasks }) {
+function RepoView({ repo, tab, setTab, onDispatch, onOpenTask, tasks }) {
   const [owner, name] = repo.nameWithOwner.split('/')
   const [issues, setIssues] = useState(null)
   const [pulls, setPulls] = useState(null)
@@ -184,7 +189,7 @@ function RepoView({ repo, tab, setTab, onDispatch, tasks }) {
 
       <div className="list">
         {tab === 'backlog' && (
-          <IssueList issues={issues} taskByIssue={taskByIssue} onDispatch={(it, model) => onDispatch(repo, it, model)} />
+          <IssueList issues={issues} taskByIssue={taskByIssue} onOpenTask={onOpenTask} onDispatch={(it, model) => onDispatch(repo, it, model)} />
         )}
         {tab === 'prs' && <PullList pulls={pulls} />}
       </div>
@@ -192,17 +197,23 @@ function RepoView({ repo, tab, setTab, onDispatch, tasks }) {
   )
 }
 
-function IssueList({ issues, taskByIssue, onDispatch }) {
+function IssueList({ issues, taskByIssue, onDispatch, onOpenTask }) {
   if (issues === null) return <div className="muted pad">Loading missions…</div>
   if (!issues.length) return <div className="muted pad">No open issues. Clear skies. ✦</div>
   return issues.map((it) => (
-    <IssueRow key={it.number} issue={it} task={taskByIssue[it.number]} onDispatch={onDispatch} />
+    <IssueRow key={it.number} issue={it} task={taskByIssue[it.number]} onDispatch={onDispatch} onOpenTask={onOpenTask} />
   ))
 }
 
-function IssueRow({ issue: it, task, onDispatch }) {
+function IssueRow({ issue: it, task, onDispatch, onOpenTask }) {
   const [model, setModel] = useState('opus')
-  const busy = task && ACTIVE.has(task.status)
+  // An in-flight task owns this issue — show its live status and a way to jump
+  // to it, rather than offering a second Plan (which the backend would dedupe).
+  const inflight = task && ACTIVE.has(task.status)
+  const verb = task?.status === 'planning' ? 'planning…'
+    : task?.status === 'planned' ? 'plan ready'
+    : task?.status === 'waiting' ? 'needs you'
+    : 'in progress'
   return (
     <div className="card">
       <div className="card-main">
@@ -215,20 +226,25 @@ function IssueRow({ issue: it, task, onDispatch }) {
         ))}
         <span className="muted">{it.comments} 💬 · {timeAgo(it.updatedAt)}</span>
         {task && <StatusBadge status={task.status} />}
-        <select
-          className="model-select"
-          value={model}
-          disabled={busy}
-          onChange={(e) => setModel(e.target.value)}
-          title="Model for this dispatch"
-        >
-          <option value="opus">Opus</option>
-          <option value="sonnet">Sonnet</option>
-          <option value="haiku">Haiku</option>
-        </select>
-        <button className="dispatch" disabled={busy} onClick={() => onDispatch(it, model)}>
-          {busy ? '… working' : '📋 Plan'}
-        </button>
+        {inflight ? (
+          <button className="dispatch view-btn" onClick={() => onOpenTask(task.id)}>
+            👁 View {verb}
+          </button>
+        ) : (
+          <>
+            <select
+              className="model-select"
+              value={model}
+              onChange={(e) => setModel(e.target.value)}
+              title="Model for this plan"
+            >
+              <option value="opus">Opus</option>
+              <option value="sonnet">Sonnet</option>
+              <option value="haiku">Haiku</option>
+            </select>
+            <button className="dispatch" onClick={() => onDispatch(it, model)}>📋 Plan</button>
+          </>
+        )}
       </div>
     </div>
   )

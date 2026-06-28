@@ -4,7 +4,7 @@ import express from 'express'
 import * as github from './github.js'
 import * as runner from './runner.js'
 import * as questions from './questions.js'
-import { bus, listTasks, getTask, createTask } from './tasks.js'
+import { bus, listTasks, getTask, createTask, findActiveByIssue } from './tasks.js'
 
 const app = express()
 const PORT = process.env.PORT || 5174
@@ -40,6 +40,10 @@ app.post('/api/repos/:owner/:repo/plan', handle(async (req) => {
   const { owner, repo } = req.params
   const { issueNumber, issueTitle, model, defaultBranch } = req.body
   if (!issueNumber) throw new Error('issueNumber is required')
+  // Dedupe: if a plan/run is already in flight for this issue, return it
+  // instead of spawning a second agent.
+  const existing = await findActiveByIssue(owner, repo, issueNumber)
+  if (existing) return { ...existing, deduped: true }
   const task = await createTask({ owner, repo, issueNumber, issueTitle, model })
   runner.startPlan(task, { defaultBranch }).catch((e) => console.error('startPlan crashed', e))
   return task

@@ -45,6 +45,24 @@ export async function getTask(id) {
   return tasks.get(id)
 }
 
+// In-flight (non-terminal) statuses — a task in one of these owns its issue.
+const ACTIVE_STATUS = new Set([
+  'queued', 'preparing', 'planning', 'planned', 'running', 'waiting',
+  'committing', 'pushing', 'opening_pr',
+])
+
+// The active task already working an issue, if any — used to dedupe so we
+// never spawn a second plan agent for the same issue.
+export async function findActiveByIssue(owner, repo, issueNumber) {
+  await load()
+  for (const t of tasks.values()) {
+    if (t.owner === owner && t.repo === repo && t.issueNumber == issueNumber && ACTIVE_STATUS.has(t.status)) {
+      return t
+    }
+  }
+  return null
+}
+
 export async function createTask({ owner, repo, issueNumber, issueTitle, model }) {
   await load()
   const id = randomUUID().slice(0, 8)
