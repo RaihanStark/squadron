@@ -140,6 +140,27 @@ app.get('/api/repos/:owner/:repo/pulls/:number', handle((req) =>
 app.post('/api/repos/:owner/:repo/pulls/:number/merge', handle(async (req) =>
   ({ merged: await github.mergePr(req.params.owner, req.params.repo, req.params.number, { method: req.body?.method }) })))
 
+// Releases for a repo. Listing powers the Release tab; creating cuts a new one —
+// the pushed tag triggers the repo's own release workflow (build/publish), while
+// the GitHub Release is published with notes.
+app.get('/api/repos/:owner/:repo/releases', handle((req) =>
+  github.listReleases(req.params.owner, req.params.repo)))
+
+app.post('/api/repos/:owner/:repo/releases', handle(async (req) => {
+  const { tag, target, title, notes, generateNotes, prerelease } = req.body || {}
+  const t = (tag || '').trim()
+  if (!t) throw new Error('tag is required')
+  const url = await github.createRelease(req.params.owner, req.params.repo, {
+    tag: t,
+    target: (target || '').trim() || undefined,
+    title: (title || '').trim() || undefined,
+    notes: (notes || '').trim() || undefined,
+    generateNotes: !!generateNotes,
+    prerelease: !!prerelease,
+  })
+  return { url }
+}))
+
 // --- Agents / tasks (slice 2) ---
 
 // Start an interactive planning session for an issue. Returns the created task
