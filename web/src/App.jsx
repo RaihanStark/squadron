@@ -173,6 +173,18 @@ export default function App() {
     } catch (e) { alert('Resolve failed: ' + e.message) }
   }
 
+  // Plan-less interactive "quick fix" on an open PR — surfaced in the PR detail's
+  // docked sidebar. Returns the task so the panel can track it live.
+  async function startPrFix(repoObj, pr, instruction) {
+    const [owner, repo] = repoObj.nameWithOwner.split('/')
+    const task = await api(`/api/repos/${owner}/${repo}/pulls/${pr.number}/fix`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ instruction, prTitle: pr.title }),
+    })
+    setTasks((prev) => ({ ...prev, [task.id]: { ...(prev[task.id] || {}), ...task, events: prev[task.id]?.events || [] } }))
+    return task
+  }
+
   // Plan-less "quick task": create an errand and surface it in the repo sidebar.
   async function startErrand(repoObj, instruction) {
     const [owner, repo] = repoObj.nameWithOwner.split('/')
@@ -254,7 +266,8 @@ export default function App() {
               task={findTask((t) => `${t.owner}/${t.repo}` === selectedPr.repo.nameWithOwner && t.issueNumber === selectedPr.pr.number && (t.kind || 'plan') === 'review')}
               fixTask={findTask((t) => `${t.owner}/${t.repo}` === selectedPr.repo.nameWithOwner && t.issueNumber === selectedPr.pr.number && t.kind === 'fix')}
               resolveTask={findTask((t) => `${t.owner}/${t.repo}` === selectedPr.repo.nameWithOwner && t.issueNumber === selectedPr.pr.number && t.kind === 'resolve')}
-              onReview={review} onFixCi={fixCi} onResolve={resolveConflicts} onOpenChanges={openChanges} onBack={backToRepo} />
+              onReview={review} onFixCi={fixCi} onResolve={resolveConflicts} onStartFix={startPrFix}
+              onOpenChanges={openChanges} onBack={backToRepo} tasks={taskList} />
           ) : activeRepo ? (
             <RepoView key={active} repo={activeRepo} tab={tab} setTab={setTab} onDispatch={dispatch} onReview={review}
               onOpenTask={openTask} onOpenPr={openPr} onOpenChanges={openChanges} onOpenIssue={openIssue} onStartErrand={startErrand} onReleaseTask={onReleaseTask} tasks={taskList} />

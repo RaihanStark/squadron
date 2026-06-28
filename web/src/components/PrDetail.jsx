@@ -3,8 +3,9 @@ import { api } from '../api.js'
 import { parseDiff, filePath } from '../diff.js'
 import { ciState, ciChecks, CI_LABEL, CI_CHECK_SYMBOL } from '../ci.js'
 import DiffFile from './DiffFile.jsx'
+import PrFixPanel from './PrFixPanel.jsx'
 
-export default function PrDetail({ repo, pr, task, fixTask, resolveTask, onReview, onFixCi, onResolve, onOpenChanges, onBack }) {
+export default function PrDetail({ repo, pr, task, fixTask, resolveTask, tasks = [], onReview, onFixCi, onResolve, onStartFix, onOpenChanges, onBack }) {
   const [owner, name] = repo.nameWithOwner.split('/')
   const [files, setFiles] = useState(null)
   const [detail, setDetail] = useState(null)
@@ -13,6 +14,7 @@ export default function PrDetail({ repo, pr, task, fixTask, resolveTask, onRevie
   const [posting, setPosting] = useState(false)
   const [merging, setMerging] = useState(false)
   const [mergeMethod, setMergeMethod] = useState('squash')
+  const [fixOpen, setFixOpen] = useState(false)
 
   useEffect(() => {
     setFiles(null); setError(null); setDetail(null)
@@ -68,6 +70,12 @@ export default function PrDetail({ repo, pr, task, fixTask, resolveTask, onRevie
   const resolving = resolveTask && ['preparing', 'running', 'committing', 'pushing'].includes(resolveTask.status)
   const resolveReady = resolveTask && resolveTask.status === 'changes_ready'
 
+  // A live/staged interactive PR-update task for this PR, if any — lets the Fix
+  // button hint that work is in flight and auto-opens the panel.
+  const prFix = tasks.find((t) => t.kind === 'pr_fix' && `${t.owner}/${t.repo}` === repo.nameWithOwner
+    && t.issueNumber === pr.number && !['pr_open', 'cancelled', 'no_changes', 'error'].includes(t.status))
+  useEffect(() => { if (prFix) setFixOpen(true) }, [!!prFix])
+
   const reviewing = task && ['preparing', 'reviewing', 'posting'].includes(task.status)
   const reviewed = task && (task.status === 'reviewed' || task.status === 'review_posted')
   const fixActive = fixTask && ['preparing', 'running', 'committing', 'waiting'].includes(fixTask.status)
@@ -88,6 +96,10 @@ export default function PrDetail({ repo, pr, task, fixTask, resolveTask, onRevie
           </h1>
         </div>
         <div className="agent-actions">
+          <button className={`fix-toggle ${fixOpen ? 'on' : ''} ${prFix ? 'busy' : ''}`} onClick={() => setFixOpen((o) => !o)}
+            title="Make a quick change to this PR — e.g. to address reviewer feedback">
+            🔧 Fix
+          </button>
           <select className="model-select" value={mergeMethod} onChange={(e) => setMergeMethod(e.target.value)} disabled={merging} title="Merge method">
             <option value="squash">Squash</option>
             <option value="merge">Merge commit</option>
@@ -128,28 +140,37 @@ export default function PrDetail({ repo, pr, task, fixTask, resolveTask, onRevie
         </div>
       </div>
 
-      {checks.length > 0 && (
-        <div className="ci-checks">
-          {checks.map((c, i) => (
-            <div key={i} className={`ci-check ${CI_LABEL[c.state].cls}`}>
-              <span className="ci-check-icon">{CI_CHECK_SYMBOL[c.state]}</span>
-              <span className="ci-check-name">
-                {c.link ? <a href={c.link} target="_blank" rel="noreferrer">{c.name}</a> : c.name}
-              </span>
-              {c.description && <span className="ci-check-desc">{c.description}</span>}
+      <div className="pr-body">
+        <div className="pr-main">
+          {checks.length > 0 && (
+            <div className="ci-checks">
+              {checks.map((c, i) => (
+                <div key={i} className={`ci-check ${CI_LABEL[c.state].cls}`}>
+                  <span className="ci-check-icon">{CI_CHECK_SYMBOL[c.state]}</span>
+                  <span className="ci-check-name">
+                    {c.link ? <a href={c.link} target="_blank" rel="noreferrer">{c.name}</a> : c.name}
+                  </span>
+                  {c.description && <span className="ci-check-desc">{c.description}</span>}
+                </div>
+              ))}
             </div>
-          ))}
+          )}
+
+          {reviewed && task.review && <div className="review-summary">🤖 {task.review}</div>}
+          {reviewed && !findings.length && <div className="review-summary ok">🤖 No issues found.</div>}
+
+          <div className="diff-view">
+            {error && <div className="error pad">⚠ {error}</div>}
+            {files === null && !error && <div className="muted pad">Loading diff…</div>}
+            {files && !files.length && <div className="muted pad">No changes to show.</div>}
+            {files && files.map((f, fi) => <DiffFile key={fi} file={f} findings={findingsByFile[filePath(f)] || []} />)}
+          </div>
         </div>
-      )}
 
-      {reviewed && task.review && <div className="review-summary">🤖 {task.review}</div>}
-      {reviewed && !findings.length && <div className="review-summary ok">🤖 No issues found.</div>}
-
-      <div className="diff-view">
-        {error && <div className="error pad">⚠ {error}</div>}
-        {files === null && !error && <div className="muted pad">Loading diff…</div>}
-        {files && !files.length && <div className="muted pad">No changes to show.</div>}
-        {files && files.map((f, fi) => <DiffFile key={fi} file={f} findings={findingsByFile[filePath(f)] || []} />)}
+        {fixOpen && (
+          <PrFixPanel repo={repo} pr={pr} tasks={tasks} onStartFix={onStartFix}
+            onOpenChanges={onOpenChanges} onClose={() => setFixOpen(false)} />
+        )}
       </div>
     </>
   )

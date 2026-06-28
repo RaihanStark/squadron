@@ -214,6 +214,25 @@ app.post('/api/repos/:owner/:repo/pulls/:number/fix-ci', handle(async (req) => {
   return task
 }))
 
+// Start an interactive "quick fix" on an open PR: a plan-less, write-capable
+// agent session checked out on the PR's head branch. The operator chats with it,
+// stages the result into Ready to Review, then pushes — which updates the PR in
+// place (no new PR). Useful for addressing reviewer feedback. Streams over /api/stream.
+app.post('/api/repos/:owner/:repo/pulls/:number/fix', handle(async (req) => {
+  const { owner, repo, number } = req.params
+  const { prTitle, instruction, model } = req.body || {}
+  const text = (instruction || '').trim()
+  if (!text) throw new Error('instruction is required')
+  const existing = await findActiveByIssue(owner, repo, number, 'pr_fix')
+  if (existing) return { ...existing, deduped: true }
+  const task = await createTask({
+    owner, repo, issueNumber: Number(number), issueTitle: prTitle || `PR #${number}`,
+    kind: 'pr_fix', local: true, body: text, model,
+  })
+  runner.startPrFix(task, { instruction: text }).catch((e) => console.error('startPrFix crashed', e))
+  return task
+}))
+
 // Start an AI merge-conflict resolution for a PR. Merges base into the head in
 // an isolated worktree, has the agent resolve the conflicts, then waits for
 // operator review before pushing back to the PR's branch. Streams over /api/stream.

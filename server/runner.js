@@ -72,6 +72,28 @@ Guidelines:
 - End each turn with a 1-3 sentence summary of what you changed.`
 }
 
+function prFixFirstMessage(owner, repo, pr, instruction, tree) {
+  return `You are an autonomous engineer updating an OPEN pull request — #${pr.number} ("${pr.title}") in ${owner}/${repo}. The PR's head branch ("${pr.headRefName}") is checked out in your working directory, so your changes land on top of the existing PR. This is a quick, plan-less fast-lane to adjust the PR — often to address feedback a reviewer left on GitHub.
+
+--- WHAT TO CHANGE ---
+${instruction}
+--- END ---
+
+Use the file tree below to jump straight to the relevant files. When you read or grep several files, do it in ONE step with parallel tool calls rather than one at a time.
+
+--- FILE TREE (${tree.total} files${tree.shown < tree.total ? `, first ${tree.shown}` : ''}) ---
+${tree.list}
+--- END FILE TREE ---
+
+Guidelines:
+- You are already at the repository root. Use relative paths only; never cd elsewhere or touch other locations — those attempts are blocked and waste turns.
+- Work in parallel: when reading or grepping several files, issue those tool calls together in one step.
+- Match the project's existing style and conventions. Run the test suite if there is one.
+- Do NOT commit, push, or open a pull request — the operator reviews and stages your changes, which then push back to this PR's branch.
+- The operator may send follow-up instructions to refine the work, so keep going until they're satisfied.
+- End each turn with a 1-3 sentence summary of what you changed.`
+}
+
 function executePrompt(owner, repo, issue, plan) {
   return `You are an autonomous engineer working in a fresh git worktree of ${owner}/${repo}. The repo is checked out in your working directory.
 
@@ -167,6 +189,52 @@ export async function startErrand(task, { instruction, defaultBranch } = {}) {
     console.error(`[errand ${id}]`, err)
     addEvent(id, { kind: 'error', text: err.message })
     await updateTask(id, { status: 'error', error: err.message })
+    sessions.delete(id)
+  }
+}
+
+// --- PR fix phase ---
+//
+// An interactive, errand-style "quick task" scoped to an OPEN PR. Same warm chat
+// loop as an errand, but the worktree is the PR's head branch — so when the
+// operator stages and pushes, the changes update the existing PR in place (no new
+// PR). Handy for addressing reviewer feedback left on GitHub.
+export async function startPrFix(task, { instruction } = {}) {
+  const { id, owner, repo, issueNumber: prNumber, model } = task
+  const text = instruction || task.body || task.issueTitle
+  try {
+    await updateTask(id, { status: 'preparing' })
+    addEvent(id, { kind: 'status', text: `Fetching PR #${prNumber}…` })
+    const pr = await gh.getPr(owner, repo, prNumber)
+    if (pr.isCrossRepository) {
+      addEvent(id, { kind: 'error', text: "Can't update a fork PR — no push access to its branch. Update it from the fork instead." })
+      await updateTask(id, { status: 'error', error: 'Cannot update a fork PR.' })
+      sessions.delete(id)
+      return
+    }
+    const headRef = pr.headRefName
+
+    addEvent(id, { kind: 'status', text: 'Checking out PR head in a worktree…' })
+    const { path: wt } = await git.createPrHeadWorktree(owner, repo, id, headRef)
+    await updateTask(id, { status: 'running', branch: headRef, base: headRef, headRef, prUrl: pr.url })
+
+    const tree = await git.trackedFiles(wt).catch(() => ({ total: 0, shown: 0, list: '(unavailable)' }))
+    const issue = { number: prNumber, title: task.issueTitle }
+    const ctx = { id, owner, repo, issue, wt, branch: headRef, base: headRef, model, phase: 'errand', kind: 'pr_fix', instruction: text, lastText: '' }
+    sessions.set(id, ctx)
+
+    const handle = await openSession({
+      cwd: wt, model, permissionMode: 'bypassPermissions',
+      askUser: askUserFor(id),
+      onMessage: (m) => onSessionMessage(ctx, m),
+    })
+    ctx.handle = handle
+    handle.send(prFixFirstMessage(owner, repo, pr, text, tree))
+  } catch (err) {
+    console.error(`[pr-fix ${id}]`, err)
+    addEvent(id, { kind: 'error', text: err.message })
+    await updateTask(id, { status: 'error', error: err.message })
+    await git.removeWorktree(owner, repo, id).catch(() => {})
     sessions.delete(id)
   }
 }
@@ -384,14 +452,16 @@ export function sendMessage(taskId, text) {
 
 // Stage an errand's working-tree changes into "Ready to Review": commit locally
 // (no push), close the warm session, and hand off to the normal push→PR flow.
+// A 'pr_fix' is the same interactive session, only its push later updates the PR.
 export async function stageErrand(taskId) {
   const ctx = sessions.get(taskId)
   const task = await getTask(taskId)
-  if (!task || task.kind !== 'errand') return false
+  if (!task || !['errand', 'pr_fix'].includes(task.kind)) return false
   if (!ctx || ctx.phase !== 'errand') {
-    addEvent(taskId, { kind: 'error', text: 'This errand session is no longer live — start a new quick task.' })
+    addEvent(taskId, { kind: 'error', text: 'This quick-task session is no longer live — start a new one.' })
     return false
   }
+  const isPrFix = task.kind === 'pr_fix'
   const { owner, repo, wt, model } = ctx
   addEvent(taskId, { kind: 'status', text: 'Committing changes locally…' })
   await updateTask(taskId, { status: 'committing', summary: ctx.lastText || task.summary })
@@ -415,8 +485,14 @@ export async function stageErrand(taskId) {
 
   await git.commitStaged(wt, message)
   try { ctx.handle?.close() } catch { /* already closed */ }
-  await updateTask(taskId, { status: 'changes_ready', staged: true, issueTitle: title })
-  addEvent(taskId, { kind: 'result', text: 'Changes ready for review (local — not pushed). Review the diff, then push to open a PR.', ok: true })
+  // Keep a PR-fix's PR-anchored title; rename a plain errand to what it does.
+  await updateTask(taskId, { status: 'changes_ready', staged: true, ...(isPrFix ? {} : { issueTitle: title }) })
+  addEvent(taskId, {
+    kind: 'result', ok: true,
+    text: isPrFix
+      ? `Changes ready for review (local — not pushed). Review the diff, then push to update PR #${task.issueNumber}.`
+      : 'Changes ready for review (local — not pushed). Review the diff, then push to open a PR.',
+  })
   sessions.delete(taskId) // keep the worktree on disk for the diff + later push
   return true
 }
@@ -526,15 +602,18 @@ export async function pushTask(taskId) {
     return false
   }
 
-  // CI-fix tasks push back to the existing PR's head branch — no new PR.
-  if (task.kind === 'fix') {
+  // CI-fix and PR-update tasks push back to the existing PR's head branch — no new PR.
+  if (task.kind === 'fix' || task.kind === 'pr_fix') {
     try {
-      addEvent(taskId, { kind: 'status', text: 'Pushing fix to the PR branch…' })
+      addEvent(taskId, { kind: 'status', text: 'Pushing update to the PR branch…' })
       await updateTask(taskId, { status: 'pushing' })
       await git.pushToRef(git.worktreePathFor(taskId), task.branch)
-      await gh.postPrComment(task.owner, task.repo, task.issueNumber, '🤖 Pushed a CI fix from Squadron — re-running checks.').catch(() => {})
+      const note = task.kind === 'pr_fix'
+        ? '🤖 Pushed an update from Squadron.'
+        : '🤖 Pushed a CI fix from Squadron — re-running checks.'
+      await gh.postPrComment(task.owner, task.repo, task.issueNumber, note).catch(() => {})
       await updateTask(taskId, { status: 'pr_open', prUrl: task.prUrl })
-      addEvent(taskId, { kind: 'result', text: `Fix pushed to PR #${task.issueNumber}${task.prUrl ? ` → ${task.prUrl}` : ''}`, ok: true })
+      addEvent(taskId, { kind: 'result', text: `Update pushed to PR #${task.issueNumber}${task.prUrl ? ` → ${task.prUrl}` : ''}`, ok: true })
       preview.stop(taskId)
       await git.removeWorktree(task.owner, task.repo, taskId)
       return true
