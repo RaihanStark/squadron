@@ -79,6 +79,16 @@ export async function taskDiff(taskId, base) {
   return stdout
 }
 
+// The repo's tracked files (gitignored paths excluded), for front-loading the
+// planner so it doesn't discover structure one read at a time.
+export async function trackedFiles(wt, limit = 400) {
+  const { stdout } = await git(['ls-files'], wt)
+  const all = stdout.split('\n').filter(Boolean)
+  let list = all.slice(0, limit).join('\n')
+  if (list.length > 12000) list = list.slice(0, 12000) + '\n…'
+  return { total: all.length, shown: Math.min(all.length, limit), list }
+}
+
 // True if the agent actually changed anything.
 export async function hasChanges(wt) {
   const { stdout } = await git(['status', '--porcelain'], wt)

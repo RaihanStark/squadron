@@ -12,13 +12,21 @@ const PLAN_INSTRUCTIONS = `You are scoping a GitHub issue for an autonomous engi
 
 Operating rules (important):
 - You are already in the repository root. Use relative paths only; never cd elsewhere or access paths outside this directory.
+- A file tree of the repo is provided below — use it to jump straight to the relevant files instead of discovering the structure one read at a time.
+- Work in parallel: when you need to read or grep several files you already know you want, issue those tool calls TOGETHER in a single step (multiple parallel tool calls), not one after another. Minimize sequential round-trips.
 - Present the plan directly as your reply. Do NOT write it to a file, do NOT call ExitPlanMode or AskUserQuestion, and do NOT discuss which tools are or aren't available.
 - To ask the operator a question, simply write it in your message — they reply in the chat. The operator approves and triggers execution separately.`
 
-function planFirstMessage(owner, repo, issue) {
+function planFirstMessage(owner, repo, issue, tree) {
   return `You are scoping work in the repository ${owner}/${repo}. The repo is checked out in your current working directory (read-only for now).
 
 IMPORTANT: Stay strictly inside your current working directory. Use relative paths only. Do NOT cd elsewhere, reference absolute paths to other locations, or search the wider filesystem — those attempts are blocked and waste turns. Everything you need is right here.
+
+Use the file tree below to go straight to the relevant files. When you read or grep several files, do it in ONE step with parallel tool calls rather than one at a time.
+
+--- FILE TREE (${tree.total} files${tree.shown < tree.total ? `, first ${tree.shown}` : ''}) ---
+${tree.list}
+--- END FILE TREE ---
 
 Investigate the relevant code and propose a concrete implementation plan for this issue. Keep it tight and skimmable.
 
@@ -38,6 +46,7 @@ ${plan}
 
 Guidelines:
 - You are already at the repository root. Use relative paths only; never cd elsewhere or touch other locations — those attempts are blocked and waste turns.
+- Work in parallel: when reading or grepping several files, issue those tool calls together in one step, not one at a time.
 - Match the project's existing style and conventions.
 - If there's a test suite, run it; add or update tests where sensible.
 - Only call the \`ask_user\` tool if a wrong guess would be expensive or irreversible.
@@ -72,6 +81,7 @@ export async function startPlan(task, { defaultBranch } = {}) {
     const { path: wt, branch, base } = await git.createWorktree(owner, repo, id, defaultBranch)
     await updateTask(id, { branch, base, status: 'planning' })
 
+    const tree = await git.trackedFiles(wt).catch(() => ({ total: 0, shown: 0, list: '(unavailable)' }))
     const ctx = { id, owner, repo, issue, wt, branch, base, model, phase: 'planning', lastText: '', plan: '' }
     sessions.set(id, ctx)
 
@@ -80,7 +90,7 @@ export async function startPlan(task, { defaultBranch } = {}) {
       onMessage: (m) => onPlanMessage(ctx, m),
     })
     ctx.handle = handle
-    handle.send(planFirstMessage(owner, repo, issue))
+    handle.send(planFirstMessage(owner, repo, issue, tree))
   } catch (err) {
     console.error(`[plan ${id}]`, err)
     addEvent(id, { kind: 'error', text: err.message })
