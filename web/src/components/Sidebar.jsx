@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { ACTIVE, timeAgo } from '../constants.js'
 import AddRepoPicker from './AddRepoPicker.jsx'
+import UsageGauge from './UsageGauge.jsx'
 
 export default function Sidebar({ repos, reposError, active, view, taskList, onSelect, onAddRepo, onRemoveRepo }) {
   const [picking, setPicking] = useState(false)
@@ -39,6 +40,7 @@ export default function Sidebar({ repos, reposError, active, view, taskList, onS
           </div>
         )
       })}
+      <UsageGauge />
     </aside>
   )
 }

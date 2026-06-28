@@ -177,6 +177,17 @@ export const changeTask = {
 
 export function demoApi(path, opts) {
   if (path === '/api/me') return Promise.resolve({ login: 'acme' })
+  if (path === '/api/usage') return Promise.resolve({
+    ok: true,
+    plan: 'default_claude_max_5x',
+    buckets: {
+      fiveHour: { utilization: 43, resetsAt: new Date(now + 130 * 60000).toISOString() },
+      sevenDay: { utilization: 35, resetsAt: new Date(now + 3 * 86400000).toISOString() },
+      sevenDayOpus: { utilization: 58, resetsAt: new Date(now + 3 * 86400000).toISOString() },
+      sevenDaySonnet: { utilization: 1, resetsAt: new Date(now + 3 * 86400000).toISOString() },
+    },
+    fetchedAt: now,
+  })
   if (/\/preview$/.test(path)) return Promise.resolve({ status: 'stopped', url: null, logs: [], command: 'npm run dev', source: 'detected' })
   if (/\/run-command$/.test(path)) return Promise.resolve({ command: null })
   if (/\/issues\//.test(path) && opts?.method === 'PATCH') {

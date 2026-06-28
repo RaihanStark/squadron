@@ -9,6 +9,7 @@ import * as questions from './questions.js'
 import * as git from './git.js'
 import * as localIssues from './localIssues.js'
 import * as preview from './preview.js'
+import * as usage from './usage.js'
 import * as runConfig from './runConfig.js'
 import * as selectedRepos from './selectedRepos.js'
 import { bus, listTasks, getTask, createTask, findActiveByIssue } from './tasks.js'
@@ -31,6 +32,10 @@ const handle = (fn) => async (req, res) => {
 app.get('/api/health', handle(async () => ({ ok: true, ts: Date.now() })))
 
 app.get('/api/me', handle(async () => ({ login: await github.currentUser() })))
+
+// Live Claude subscription usage (the numbers `/usage` shows). Reads the user's
+// Claude Code login token — see server/usage.js.
+app.get('/api/usage', handle(() => usage.get()))
 
 // The sidebar fleet = only the repos the user has curated. Fetch each in
 // parallel; if one was deleted/renamed its `gh repo view` throws — drop it
