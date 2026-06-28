@@ -1,7 +1,7 @@
 {
   "name": "squadron",
   "private": true,
-  "version": "0.1.2",
+  "version": "0.1.3",
   "type": "module",
   "description": "A local cockpit for commanding Claude agents across your fleet of GitHub repos.",
   "author": "RaihanStark <dev@byraihan.com>",
