@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, Fragment } from 'react'
 import { demoApi } from './demo.js'
 import { parseDiff, filePath } from './diff.js'
+import { parseAnsi } from './ansi.js'
 
 const PARAMS = new URLSearchParams(typeof location !== 'undefined' ? location.search : '')
 const DEMO = PARAMS.has('demo')
@@ -626,7 +627,15 @@ function ChangesDetail({ task, onBack }) {
           <div className="muted preview-note">Running — no web URL detected. If this is a desktop app (e.g. a Go/Fyne GUI), its window opened on your machine. Logs below.</div>
         )}
         {preview?.logs?.length ? (
-          <pre className="preview-logs">{preview.logs.slice(-200).join('\n')}</pre>
+          <div className="preview-logs">
+            {preview.logs.slice(-200).map((line, i) => (
+              <div key={i} className="log-row">
+                {parseAnsi(line).map((seg, j) => (
+                  <span key={j} style={{ color: seg.color || undefined, fontWeight: seg.bold ? 700 : undefined }}>{seg.text}</span>
+                ))}
+              </div>
+            ))}
+          </div>
         ) : null}
       </div>
 

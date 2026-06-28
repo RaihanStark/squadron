@@ -12,10 +12,14 @@ import * as runConfig from './runConfig.js'
 
 const previews = new Map() // taskId -> { status, url, logs, proc, command, source }
 
+// Keep SGR color codes (rendered in the UI) but strip cursor/erase/OSC junk.
+const STRIP = /\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|\x1b[=>]|\x1b\[[0-9;?]*[A-LN-Za-ln-z]/g
+const clean = (s) => s.replace(STRIP, '').replace(/[\r\b]/g, '')
+
 function log(taskId, line) {
   const p = previews.get(taskId)
   if (!p) return
-  p.logs.push(line)
+  p.logs.push(clean(line))
   if (p.logs.length > 500) p.logs.shift()
 }
 
@@ -91,7 +95,7 @@ export async function start(taskId) {
     p.status = 'starting'
     log(taskId, `$ ${resolved.command}`)
     const proc = spawn('sh', ['-c', resolved.command], {
-      cwd: wt, detached: true, env: { ...process.env, BROWSER: 'none', FORCE_COLOR: '0' },
+      cwd: wt, detached: true, env: { ...process.env, BROWSER: 'none', FORCE_COLOR: '1' },
     })
     p.proc = proc
     const onData = (d) => {
