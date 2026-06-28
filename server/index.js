@@ -191,6 +191,18 @@ app.post('/api/repos/:owner/:repo/review', handle(async (req) => {
   return task
 }))
 
+// Dispatch an agent to fix failing CI on a PR. The fix lands in Ready to Review;
+// pushing it updates the existing PR branch (no new PR). Streams over /api/stream.
+app.post('/api/repos/:owner/:repo/pulls/:number/fix-ci', handle(async (req) => {
+  const { owner, repo, number } = req.params
+  const { prTitle, model } = req.body || {}
+  const existing = await findActiveByIssue(owner, repo, number, 'fix')
+  if (existing) return { ...existing, deduped: true }
+  const task = await createTask({ owner, repo, issueNumber: Number(number), issueTitle: prTitle, model, kind: 'fix' })
+  runner.startCiFix(task).catch((e) => console.error('startCiFix crashed', e))
+  return task
+}))
+
 // Start a plan-less interactive "errand": a quick task whose changes land in
 // Ready to Review without the plan/approve ceremony. Streams over /api/stream.
 app.post('/api/repos/:owner/:repo/errand', handle(async (req) => {

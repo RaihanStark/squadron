@@ -4,7 +4,7 @@ import { parseDiff, filePath } from '../diff.js'
 import { ciState, ciChecks, CI_LABEL, CI_CHECK_SYMBOL } from '../ci.js'
 import DiffFile from './DiffFile.jsx'
 
-export default function PrDetail({ repo, pr, task, onReview, onBack }) {
+export default function PrDetail({ repo, pr, task, fixTask, onReview, onFixCi, onBack }) {
   const [owner, name] = repo.nameWithOwner.split('/')
   const [files, setFiles] = useState(null)
   const [detail, setDetail] = useState(null)
@@ -65,6 +65,8 @@ export default function PrDetail({ repo, pr, task, onReview, onBack }) {
 
   const reviewing = task && ['preparing', 'reviewing', 'posting'].includes(task.status)
   const reviewed = task && (task.status === 'reviewed' || task.status === 'review_posted')
+  const fixActive = fixTask && ['preparing', 'running', 'committing', 'waiting'].includes(fixTask.status)
+  const fixReady = fixTask && fixTask.status === 'changes_ready'
   const findings = task?.findings || []
   const findingsByFile = {}
   for (const f of findings) (findingsByFile[f.file] ||= []).push(f)
@@ -104,6 +106,12 @@ export default function PrDetail({ repo, pr, task, onReview, onBack }) {
                 <option value="haiku">Haiku</option>
               </select>
               <button className="dispatch" onClick={() => onReview(repo, pr, model)}>🤖 {reviewed ? 'Re-review' : 'AI Review'}</button>
+              {ci === 'failure' && (
+                <button className="dispatch" disabled={fixActive} onClick={() => onFixCi(repo, pr, model)}
+                  title="Dispatch an agent to read the failing CI logs and push a fix to this PR">
+                  🛠 {fixActive ? 'Fixing CI…' : fixReady ? 'Fix ready ↗' : 'Fix CI'}
+                </button>
+              )}
             </>
           )}
         </div>

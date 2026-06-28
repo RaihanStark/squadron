@@ -120,6 +120,20 @@ export function getPrDiff(owner, repo, number) {
   return ghRaw(['pr', 'diff', String(number), '--repo', `${owner}/${repo}`])
 }
 
+// The check runs / statuses for a PR — name + bucketed state + a link to the run.
+export function prChecks(owner, repo, number) {
+  return gh([
+    'pr', 'checks', String(number),
+    '--repo', `${owner}/${repo}`,
+    '--json', 'name,state,bucket,link,workflow',
+  ])
+}
+
+// The failing-step logs for a single Actions run — fed to the CI-fix agent.
+export function failedRunLog(owner, repo, runId) {
+  return ghRaw(['run', 'view', String(runId), '--repo', `${owner}/${repo}`, '--log-failed'])
+}
+
 // Post a comment on a PR. Returns the comment URL.
 export function postPrComment(owner, repo, number, body) {
   return ghRaw(['pr', 'comment', String(number), '--repo', `${owner}/${repo}`, '--body', body])
@@ -173,4 +187,47 @@ export function createPr(owner, repo, { head, base, title, body }) {
     '--title', title,
     '--body', body,
   ]).then((out) => out.split('\n').filter(Boolean).pop())
+}
+
+// --- CI rollup helpers (server-side; mirrors web/src/ci.js for the fix flow) ---
+//
+// A PR's `statusCheckRollup` mixes CheckRun entries (status + conclusion) and
+// legacy StatusContext entries (state). These let the CI-fix flow gate on a real
+// failure and locate the failing Actions runs to pull logs from.
+const FAIL_CONCLUSIONS = new Set(['FAILURE', 'CANCELLED', 'TIMED_OUT', 'ACTION_REQUIRED', 'STARTUP_FAILURE', 'STALE'])
+const FAIL_STATES = new Set(['FAILURE', 'ERROR'])
+
+// Roll a `statusCheckRollup` up to one of 'success' | 'failure' | 'pending' | 'none'.
+export function ciState(rollup) {
+  if (!Array.isArray(rollup) || rollup.length === 0) return 'none'
+  let pending = false
+  let failure = false
+  for (const c of rollup) {
+    if (c.state != null) {
+      if (FAIL_STATES.has(c.state)) failure = true
+      else if (c.state === 'PENDING' || c.state === 'EXPECTED') pending = true
+    } else {
+      if (c.status !== 'COMPLETED') pending = true
+      else if (FAIL_CONCLUSIONS.has(c.conclusion)) failure = true
+    }
+  }
+  if (failure) return 'failure'
+  if (pending) return 'pending'
+  return 'success'
+}
+
+// The Actions run IDs of the FAILING checks, parsed from each entry's run link.
+// Returns a de-duplicated array of numeric-string ids (e.g. ['123', '456']).
+export function failedRunIds(rollup) {
+  if (!Array.isArray(rollup)) return []
+  const ids = new Set()
+  for (const c of rollup) {
+    const failed = c.state != null
+      ? FAIL_STATES.has(c.state)
+      : (c.status === 'COMPLETED' && FAIL_CONCLUSIONS.has(c.conclusion))
+    if (!failed) continue
+    const m = String(c.detailsUrl || c.targetUrl || '').match(/\/actions\/runs\/(\d+)/)
+    if (m) ids.add(m[1])
+  }
+  return [...ids]
 }
