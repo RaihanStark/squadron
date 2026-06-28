@@ -24,17 +24,23 @@ export default function App() {
   const [tasks, setTasks] = useState({})
   const [selectedTask, setSelectedTask] = useState(DEMO ? 'twait' : null)
 
-  useEffect(() => {
-    api('/api/me').then((r) => setMe(r.login)).catch(() => {})
-
+  // Fetch the curated fleet, sort by recency, and reconcile the active repo.
+  const loadRepos = () =>
     api('/api/repos')
       .then((data) => {
         const sorted = [...data].sort((a, b) => new Date(b.updatedAt) - new Date(a.updatedAt))
         setRepos(sorted)
-        // Keep the saved repo if it still exists, else default to the first.
+        setReposError(null)
+        // Keep the saved repo if it still exists, else default to the first (or none).
         setActive((cur) => (sorted.some((r) => r.nameWithOwner === cur) ? cur : (sorted[0]?.nameWithOwner ?? null)))
+        return sorted
       })
-      .catch((e) => setReposError(e.message))
+      .catch((e) => { setReposError(e.message); return [] })
+
+  useEffect(() => {
+    api('/api/me').then((r) => setMe(r.login)).catch(() => {})
+
+    loadRepos()
 
     // Full re-sync from the server (events are persisted). Keep whichever event
     // list is longer so a re-sync never regresses live deltas we already hold.
@@ -116,6 +122,27 @@ export default function App() {
 
   const findTask = (pred) => taskList.find(pred)
 
+  // Add a repo to the curated fleet, then re-fetch + select it.
+  async function addRepo(nameWithOwner) {
+    try {
+      await api('/api/selected-repos', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ nameWithOwner }),
+      })
+      await loadRepos()
+      setActive(nameWithOwner); setPref('repo', nameWithOwner); setView('repo')
+    } catch (e) { alert('Failed to add repo: ' + e.message) }
+  }
+
+  // Remove a repo from the curated fleet, then re-fetch + reconcile.
+  async function removeRepo(nameWithOwner) {
+    const [owner, repo] = nameWithOwner.split('/')
+    try {
+      await api(`/api/selected-repos/${owner}/${repo}`, { method: 'DELETE' })
+      await loadRepos()
+    } catch (e) { alert('Failed to remove repo: ' + e.message) }
+  }
+
   return (
     <div className="app">
       <header className="topbar">
@@ -131,7 +158,8 @@ export default function App() {
 
       <div className="body">
         <Sidebar repos={repos} reposError={reposError} active={active} view={view} taskList={taskList}
-          onSelect={(name) => { setActive(name); setPref('repo', name); setView('repo') }} />
+          onSelect={(name) => { setActive(name); setPref('repo', name); setView('repo') }}
+          onAddRepo={addRepo} onRemoveRepo={removeRepo} />
 
         <main className="main">
           {view === 'agents' ? (
@@ -150,7 +178,7 @@ export default function App() {
             <RepoView key={active} repo={activeRepo} tab={tab} setTab={setTab} onDispatch={dispatch} onReview={review}
               onOpenTask={openTask} onOpenPr={openPr} onOpenChanges={openChanges} onOpenIssue={openIssue} tasks={taskList} />
           ) : (
-            <div className="empty">Select a repo to begin.</div>
+            <div className="empty">{repos.length ? 'Select a repo to begin.' : 'Add a repo from the sidebar to begin.'}</div>
           )}
         </main>
       </div>

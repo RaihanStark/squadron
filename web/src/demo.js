@@ -13,6 +13,15 @@ export const repos = [
   { name: 'markdown-notes', nameWithOwner: 'acme/markdown-notes', isPrivate: false, updatedAt: ago(4200), defaultBranchRef: { name: 'main' } },
 ]
 
+// The full fleet the "Add repo" picker would browse (a superset of the curated
+// `repos` above). Only fetched on demand via /api/repos/all.
+export const allRepos = [
+  ...repos,
+  { name: 'design-system', nameWithOwner: 'acme/design-system', owner: { login: 'acme' }, isPrivate: false, updatedAt: ago(90), defaultBranchRef: { name: 'main' } },
+  { name: 'infra', nameWithOwner: 'acme/infra', owner: { login: 'acme' }, isPrivate: true, updatedAt: ago(600), defaultBranchRef: { name: 'main' } },
+  { name: 'docs-site', nameWithOwner: 'acme/docs-site', owner: { login: 'acme' }, isPrivate: false, updatedAt: ago(3000), defaultBranchRef: { name: 'main' } },
+]
+
 const L = (name, color) => ({ name, color })
 
 export const issuesByRepo = {
@@ -185,7 +194,10 @@ export function demoApi(path, opts) {
   }
   if (/\/tasks\/tchg\/diff$/.test(path)) return Promise.resolve({ diff: CHANGE_DIFF })
   if (/\/pulls\/\d+\/diff$/.test(path)) return Promise.resolve({ diff: DEMO_DIFF })
+  if (path === '/api/repos/all') return Promise.resolve(allRepos)
   if (path === '/api/repos') return Promise.resolve(repos)
+  if (path === '/api/selected-repos') return Promise.resolve(repos.map((r) => r.nameWithOwner))
+  if (/^\/api\/selected-repos/.test(path)) return Promise.resolve(repos.map((r) => r.nameWithOwner)) // POST/DELETE no-op
   if (path === '/api/tasks') return Promise.resolve([changeTask, reviewTask, ...tasks])
   const m = path.match(/^\/api\/repos\/([^/]+)\/([^/]+)\/(issues|pulls)/)
   if (m) {
