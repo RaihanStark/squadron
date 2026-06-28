@@ -163,3 +163,75 @@ export async function runExecution({ prompt, cwd, model = 'opus', onEvent, signa
     }
   }
 }
+
+// Largest diff we'll feed the namer — naming doesn't need the whole thing.
+const NAME_DIFF_MAX = 50000
+
+// Pull a { title, commit } object out of the namer's reply. Mirrors the
+// fenced-then-loose JSON extraction used elsewhere; returns null on any failure.
+function parseChangeName(text) {
+  const raw = String(text || '')
+  let json = null
+  const fence = raw.match(/```(?:json)?\s*([\s\S]*?)```/i)
+  if (fence) json = fence[1]
+  else {
+    const obj = raw.match(/\{[\s\S]*\}/)
+    if (obj) json = obj[0]
+  }
+  if (!json) return null
+  try {
+    const p = JSON.parse(json.trim())
+    const title = String(p.title || '').trim().replace(/\s+/g, ' ').slice(0, 72)
+    const commit = String(p.commit || '').trim()
+    if (!title && !commit) return null
+    return { title: title || null, commit: commit || null }
+  } catch {
+    return null
+  }
+}
+
+// Summarize a diff into a concise PR title + commit message. A cheap, tool-less
+// one-shot — used to name a quick task's changes by what actually changed rather
+// than the raw instruction. Returns { title, commit } or null on any failure so
+// callers can fall back to the instruction text.
+export async function generateChangeName({ diff, instruction, model = 'haiku' }) {
+  const text = String(diff || '').trim()
+  if (!text) return null
+  const clipped = text.length > NAME_DIFF_MAX ? text.slice(0, NAME_DIFF_MAX) + '\n…[diff truncated]…' : text
+  const prompt = `You are naming a code change for review. Below is the original request and the git diff of the changes that were made. Summarize what the diff ACTUALLY does (not just what was asked) into a concise title and commit message.
+
+Reply with EXACTLY ONE fenced \`\`\`json code block and nothing else, of the form:
+{
+  "title": "<imperative summary, <= 70 chars, no trailing period>",
+  "commit": "<conventional commit subject line; optionally a blank line then a short body>"
+}
+
+--- ORIGINAL REQUEST ---
+${String(instruction || '(none)').slice(0, 2000)}
+--- END REQUEST ---
+
+--- DIFF ---
+${clipped}
+--- END DIFF ---`
+
+  try {
+    const { query } = await sdk()
+    const q = query({
+      prompt,
+      options: { model, permissionMode: 'bypassPermissions', allowedTools: [], disallowedTools: [] },
+    })
+    let out = ''
+    for await (const msg of q) {
+      if (msg.type === 'assistant') {
+        for (const b of msg.message?.content ?? []) {
+          if (b.type === 'text' && b.text?.trim()) out = b.text.trim()
+        }
+      } else if (msg.type === 'result' && msg.result) {
+        out = msg.result
+      }
+    }
+    return parseChangeName(out)
+  } catch {
+    return null
+  }
+}
