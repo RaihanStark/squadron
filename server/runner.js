@@ -5,6 +5,7 @@ import * as gh from './github.js'
 import * as questions from './questions.js'
 import { openSession, runExecution, describeTool } from './agent.js'
 import { updateTask, addEvent, getTask } from './tasks.js'
+import * as preview from './preview.js'
 
 const sessions = new Map() // taskId -> ctx
 
@@ -256,6 +257,7 @@ export async function pushTask(taskId) {
     })
     await updateTask(taskId, { status: 'pr_open', prUrl })
     addEvent(taskId, { kind: 'result', text: `Pull request opened → ${prUrl}`, ok: true })
+    preview.stop(taskId)
     await git.removeWorktree(owner, repo, taskId)
     return true
   } catch (err) {
@@ -442,16 +444,27 @@ async function approveReview(taskId, task) {
 
 export function cancel(taskId) {
   questions.clear(taskId)
+  preview.stop(taskId)
   const ctx = sessions.get(taskId)
-  if (!ctx) return false
-  // Flip out of 'planning' first so the trailing 'result' from interrupting the
-  // session is ignored by onPlanMessage (otherwise it resets status to 'planned').
-  ctx.phase = 'cancelled'
-  ctx.ac?.abort()
-  ctx.handle?.interrupt()
-  ctx.handle?.close()
-  git.removeWorktree(ctx.owner, ctx.repo, taskId).catch(() => {})
-  updateTask(taskId, { status: 'cancelled' })
-  sessions.delete(taskId)
+  if (ctx) {
+    // Flip out of 'planning' first so the trailing 'result' from interrupting the
+    // session is ignored by onPlanMessage (otherwise it resets status to 'planned').
+    ctx.phase = 'cancelled'
+    ctx.ac?.abort()
+    ctx.handle?.interrupt()
+    ctx.handle?.close()
+    git.removeWorktree(ctx.owner, ctx.repo, taskId).catch(() => {})
+    updateTask(taskId, { status: 'cancelled' })
+    sessions.delete(taskId)
+    return true
+  }
+  // No live session (e.g. discarding a changes_ready task awaiting review).
+  // Still clean up: remove the worktree and mark it cancelled.
+  ;(async () => {
+    const t = await getTask(taskId)
+    if (!t) return
+    await git.removeWorktree(t.owner, t.repo, taskId).catch(() => {})
+    await updateTask(taskId, { status: 'cancelled' })
+  })()
   return true
 }

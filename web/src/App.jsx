@@ -542,12 +542,29 @@ function ChangesDetail({ task, onBack }) {
   const [files, setFiles] = useState(null)
   const [error, setError] = useState(null)
   const [pushing, setPushing] = useState(false)
+  const [preview, setPreview] = useState(null) // { status, url, logs, command, source }
+  const [cmd, setCmd] = useState('')
+  const [cmdDirty, setCmdDirty] = useState(false)
 
   useEffect(() => {
     if (!task) return
     setFiles(null); setError(null)
     api(`/api/tasks/${task.id}/diff`).then((r) => setFiles(parseDiff(r.diff || ''))).catch((e) => setError(e.message))
   }, [task?.id])
+
+  // Poll the preview process state while this view is open.
+  useEffect(() => {
+    if (!task) return
+    let alive = true
+    const poll = () => api(`/api/tasks/${task.id}/preview`).then((s) => {
+      if (!alive) return
+      setPreview(s)
+      setCmd((c) => (cmdDirty ? c : (s.command || '')))
+    }).catch(() => {})
+    poll()
+    const i = setInterval(poll, 1500)
+    return () => { alive = false; clearInterval(i) }
+  }, [task?.id, cmdDirty])
 
   if (!task) return <div className="empty">These changes are no longer available.</div>
 
@@ -561,8 +578,16 @@ function ChangesDetail({ task, onBack }) {
     if (!confirm('Discard these local changes? This cancels the task and removes its worktree.')) return
     try { await api(`/api/tasks/${task.id}/cancel`, { method: 'POST' }); onBack() } catch (e) { alert(e.message) }
   }
+  const [owner, name] = `${task.owner}/${task.repo}`.split('/')
+  async function startPreview() {
+    if (cmdDirty) { await api(`/api/repos/${owner}/${name}/run-command`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ command: cmd }) }).catch(() => {}); setCmdDirty(false) }
+    await api(`/api/tasks/${task.id}/preview`, { method: 'POST' }).catch((e) => alert('Start failed: ' + e.message))
+  }
+  async function stopPreview() { await api(`/api/tasks/${task.id}/preview`, { method: 'DELETE' }).catch(() => {}) }
 
   const ready = task.status === 'changes_ready'
+  const pStatus = preview?.status || 'stopped'
+  const pRunning = ['preparing', 'starting', 'running'].includes(pStatus)
   return (
     <>
       <div className="main-head pr-head">
@@ -580,6 +605,30 @@ function ChangesDetail({ task, onBack }) {
       </div>
 
       {task.summary && <div className="review-summary">🤖 {task.summary}</div>}
+
+      <div className="preview">
+        <div className="preview-bar">
+          <span className="preview-title">▶ Live preview</span>
+          <input className="cmd-input" value={cmd} placeholder="run command (e.g. npm run dev, go run .)"
+            onChange={(e) => { setCmd(e.target.value); setCmdDirty(true) }} disabled={pRunning} />
+          {preview?.source && !cmdDirty && <span className="muted">{preview.source}</span>}
+          {pRunning
+            ? <button className="cancel" onClick={stopPreview}>■ Stop</button>
+            : <button className="approve-btn" onClick={startPreview}>▶ Start</button>}
+          <span className={`status status-${pStatus === 'running' ? 'running' : pStatus === 'error' || pStatus === 'exited' ? 'error' : 'preparing'}`}>{pStatus}</span>
+          {preview?.url && <a className="dispatch" href={preview.url} target="_blank" rel="noreferrer">Open {preview.url} ↗</a>}
+        </div>
+
+        {preview?.url && (
+          <iframe className="preview-frame" src={preview.url} title="preview" />
+        )}
+        {pRunning && !preview?.url && (
+          <div className="muted preview-note">Running — no web URL detected. If this is a desktop app (e.g. a Go/Fyne GUI), its window opened on your machine. Logs below.</div>
+        )}
+        {preview?.logs?.length ? (
+          <pre className="preview-logs">{preview.logs.slice(-200).join('\n')}</pre>
+        ) : null}
+      </div>
 
       <div className="diff-view">
         {error && <div className="error pad">⚠ {error}</div>}

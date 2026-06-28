@@ -163,6 +163,8 @@ export const changeTask = {
 
 export function demoApi(path, opts) {
   if (path === '/api/me') return Promise.resolve({ login: 'acme' })
+  if (/\/preview$/.test(path)) return Promise.resolve({ status: 'stopped', url: null, logs: [], command: 'npm run dev', source: 'detected' })
+  if (/\/run-command$/.test(path)) return Promise.resolve({ command: null })
   if (/\/issues\//.test(path) && opts?.method === 'PATCH') {
     const b = opts.body ? JSON.parse(opts.body) : {}
     return Promise.resolve({ number: null, local: true, title: b.title, body: b.body, labels: [] })

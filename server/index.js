@@ -6,6 +6,8 @@ import * as runner from './runner.js'
 import * as questions from './questions.js'
 import * as git from './git.js'
 import * as localIssues from './localIssues.js'
+import * as preview from './preview.js'
+import * as runConfig from './runConfig.js'
 import { bus, listTasks, getTask, createTask, findActiveByIssue } from './tasks.js'
 
 const app = express()
@@ -143,6 +145,17 @@ app.get('/api/tasks/:id/diff', handle(async (req) => {
 
 // Push the reviewed local changes and open the PR.
 app.post('/api/tasks/:id/push', handle(async (req) => ({ pushed: await runner.pushTask(req.params.id) })))
+
+// Live preview — run the task's worktree to verify the change.
+app.get('/api/tasks/:id/preview', handle((req) => preview.getState(req.params.id)))
+app.post('/api/tasks/:id/preview', handle((req) => preview.start(req.params.id)))
+app.delete('/api/tasks/:id/preview', handle((req) => preview.stop(req.params.id)))
+
+// Per-repo run command (override the auto-detected one).
+app.get('/api/repos/:owner/:repo/run-command', handle(async (req) =>
+  ({ command: await runConfig.getCmd(`${req.params.owner}/${req.params.repo}`) })))
+app.put('/api/repos/:owner/:repo/run-command', handle(async (req) =>
+  ({ command: await runConfig.setCmd(`${req.params.owner}/${req.params.repo}`, (req.body?.command || '').trim()) })))
 
 app.get('/api/tasks', handle(() => listTasks()))
 

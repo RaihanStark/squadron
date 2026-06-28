@@ -58,6 +58,10 @@ whole review to GitHub with one click.
 - **Plan → approve → review → PR** — scope an issue interactively, approve, and an
   autonomous agent implements it locally in an isolated worktree; you review the diff in
   **Ready to Review** and push to open the PR when it's right
+- **Live preview before push** — from a Ready-to-Review change, **▶ Start** runs that
+  worktree's dev command (auto-detected: npm / go / cargo / make, or set your own) and
+  streams logs; if it serves a web URL it's embedded in an iframe, otherwise the process
+  just runs (a Go/Fyne-style desktop window opens on your machine)
 - **Review PRs inline** — click a PR to see the diff in-app; **🤖 AI Review** renders the
   agent's findings as inline comment cards anchored to the exact lines, then post to GitHub
 - **Watch agents live** — streamed reads / edits / commands, per agent, in parallel,
@@ -120,7 +124,8 @@ Open **http://localhost:5173**. To preview with demo data (no real repos touched
 | 7 | In-app diff viewer + inline AI review findings | ✅ |
 | 8 | Review-before-push — agent commits locally → review diff → push to PR | ✅ |
 | 9 | Create backlog items (local draft or GitHub) + issue detail view | ✅ |
-| 10 | Parallel agents panel + run history | ⏳ |
+| 10 | Live preview — run a Ready-to-Review worktree (web iframe / desktop / logs) | ✅ |
+| 11 | Parallel agents panel + run history | ⏳ |
 
 ## License
 
