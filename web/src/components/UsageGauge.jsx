@@ -40,7 +40,7 @@ export default function UsageGauge() {
     let alive = true
     const tick = () => api('/api/usage').then((d) => alive && setU(d)).catch(() => {})
     tick()
-    const id = setInterval(tick, 60000) // refresh each minute
+    const id = setInterval(tick, 5 * 60_000) // refresh every 5 minutes (60 s was too frequent for the rate-limited OAuth endpoint)
     return () => { alive = false; clearInterval(id) }
   }, [])
 
