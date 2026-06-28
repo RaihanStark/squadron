@@ -39,6 +39,15 @@ body {
 }
 .sidebar-head { color: var(--muted); font-size: 11px; letter-spacing: 1px; padding: 8px 10px; }
 
+.repo-search-wrap { padding: 0 10px 8px; }
+.repo-search {
+  width: 100%; background: var(--bg); color: var(--text);
+  border: 1px solid var(--border); border-radius: 6px;
+  padding: 6px 10px; font-family: inherit; font-size: 13px;
+}
+.repo-search::placeholder { color: var(--muted); }
+.repo-search:focus { outline: none; border-color: var(--accent); }
+
 .repo {
   display: flex; flex-direction: column; gap: 2px; width: 100%;
   text-align: left; background: none; border: none; color: var(--text);

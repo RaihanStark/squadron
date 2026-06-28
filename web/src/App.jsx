@@ -35,6 +35,7 @@ export default function App() {
   const [repos, setRepos] = useState([])
   const [reposError, setReposError] = useState(null)
   const [active, setActive] = useState(null)
+  const [repoFilter, setRepoFilter] = useState('')
   const [tab, setTab] = useState('backlog')
   const [view, setView] = useState(PARAMS.get('view') === 'agents' ? 'agents' : 'repo') // 'repo' | 'agents'
 
@@ -94,6 +95,11 @@ export default function App() {
   const waitingCount = taskList.filter((t) => NEEDS_YOU.has(t.status)).length
   const activeRepo = repos.find((r) => r.nameWithOwner === active)
 
+  const filterQuery = repoFilter.trim().toLowerCase()
+  const visibleRepos = filterQuery
+    ? repos.filter((r) => r.nameWithOwner.toLowerCase().includes(filterQuery))
+    : repos
+
   async function dispatch(repoObj, issue, model) {
     const [owner, repo] = repoObj.nameWithOwner.split('/')
     try {
@@ -136,10 +142,27 @@ export default function App() {
 
       <div className="body">
         <aside className="sidebar">
-          <div className="sidebar-head">REPOS {repos.length ? `· ${repos.length}` : ''}</div>
+          <div className="sidebar-head">
+            REPOS {repos.length ? `· ${filterQuery ? `${visibleRepos.length}/${repos.length}` : repos.length}` : ''}
+          </div>
+          {repos.length > 1 && (
+            <div className="repo-search-wrap">
+              <input
+                className="repo-search"
+                type="search"
+                placeholder="Filter repos…"
+                value={repoFilter}
+                onChange={(e) => setRepoFilter(e.target.value)}
+                aria-label="Filter repositories"
+              />
+            </div>
+          )}
           {reposError && <div className="error">⚠ {reposError}</div>}
           {!reposError && !repos.length && <div className="muted">Loading fleet…</div>}
-          {repos.map((r) => {
+          {repos.length > 0 && filterQuery && !visibleRepos.length && (
+            <div className="muted pad">No repos match “{repoFilter.trim()}”.</div>
+          )}
+          {visibleRepos.map((r) => {
             const running = taskList.filter((t) => `${t.owner}/${t.repo}` === r.nameWithOwner && ACTIVE.has(t.status)).length
             return (
               <button
