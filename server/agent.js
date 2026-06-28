@@ -99,7 +99,12 @@ export async function openSession({ cwd, model = 'opus', permissionMode = 'plan'
 
 // One-shot autonomous execution run (bypassPermissions). Used after a plan is
 // approved. Calls onEvent for progress; returns { ok, summary, costUsd }.
-export async function runExecution({ prompt, cwd, model = 'opus', onEvent, signal, askUser }) {
+//
+// `resume` is a prior session id to continue from — the agent inherits that
+// conversation (e.g. the files it already read while planning) instead of
+// cold-starting. If the resume fails before producing any output (e.g. the
+// session was pruned from disk), we fall back to a fresh run exactly once.
+export async function runExecution({ prompt, cwd, model = 'opus', onEvent, signal, askUser, resume }) {
   const { query, createSdkMcpServer, tool } = await sdk()
 
   const mcpServers = {}
@@ -113,34 +118,48 @@ export async function runExecution({ prompt, cwd, model = 'opus', onEvent, signa
     mcpServers.squadron = createSdkMcpServer({ name: 'squadron', version: '0.1.0', tools: [askTool] })
   }
 
-  const q = query({
-    prompt,
-    options: {
-      cwd, model, permissionMode: 'bypassPermissions', allowDangerouslySkipPermissions: true, mcpServers,
-      hooks: makeConfineHook(cwd), // confine the agent to its worktree
-    },
-  })
-  if (signal) signal.addEventListener('abort', () => { q.interrupt?.().catch(() => {}) }, { once: true })
+  const baseOptions = {
+    cwd, model, permissionMode: 'bypassPermissions', allowDangerouslySkipPermissions: true, mcpServers,
+    hooks: makeConfineHook(cwd), // confine the agent to its worktree
+  }
 
-  let summary = ''
-  for await (const msg of q) {
-    switch (msg.type) {
-      case 'system':
-        if (msg.subtype === 'init') onEvent({ kind: 'status', text: `executing · ${msg.model || model}` })
-        break
-      case 'assistant':
-        for (const b of msg.message?.content ?? []) {
-          if (b.type === 'text' && b.text?.trim()) { summary = b.text.trim(); onEvent({ kind: 'text', text: summary }) }
-          else if (b.type === 'tool_use' && !b.name?.endsWith('ask_user')) onEvent({ kind: 'tool', text: describeTool(b) })
+  let withResume = !!resume
+  while (true) {
+    const q = query({ prompt, options: withResume ? { ...baseOptions, resume } : baseOptions })
+    if (signal) signal.addEventListener('abort', () => { q.interrupt?.().catch(() => {}) }, { once: true })
+
+    let summary = ''
+    let produced = false
+    try {
+      for await (const msg of q) {
+        produced = true
+        switch (msg.type) {
+          case 'system':
+            if (msg.subtype === 'init') onEvent({ kind: 'status', text: `${resume ? 'resumed · ' : 'executing · '}${msg.model || model}` })
+            break
+          case 'assistant':
+            for (const b of msg.message?.content ?? []) {
+              if (b.type === 'text' && b.text?.trim()) { summary = b.text.trim(); onEvent({ kind: 'text', text: summary }) }
+              else if (b.type === 'tool_use' && !b.name?.endsWith('ask_user')) onEvent({ kind: 'tool', text: describeTool(b) })
+            }
+            break
+          case 'result': {
+            if (msg.result) summary = msg.result
+            const ok = !msg.is_error && msg.subtype === 'success'
+            onEvent({ kind: 'result', ok, text: ok ? 'execution finished' : `stopped: ${msg.subtype}`, costUsd: msg.total_cost_usd, numTurns: msg.num_turns })
+            return { ok, summary, costUsd: msg.total_cost_usd, subtype: msg.subtype }
+          }
         }
-        break
-      case 'result': {
-        if (msg.result) summary = msg.result
-        const ok = !msg.is_error && msg.subtype === 'success'
-        onEvent({ kind: 'result', ok, text: ok ? 'execution finished' : `stopped: ${msg.subtype}`, costUsd: msg.total_cost_usd, numTurns: msg.num_turns })
-        return { ok, summary, costUsd: msg.total_cost_usd, subtype: msg.subtype }
       }
+      return { ok: false, summary, error: 'stream ended without a result' }
+    } catch (err) {
+      // A resume that dies before emitting anything → retry once from cold.
+      if (withResume && !produced && !signal?.aborted) {
+        withResume = false
+        onEvent({ kind: 'status', text: 'Could not resume prior session — starting fresh.' })
+        continue
+      }
+      throw err
     }
   }
-  return { ok: false, summary, error: 'stream ended without a result' }
 }

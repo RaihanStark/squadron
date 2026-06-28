@@ -92,7 +92,7 @@ export async function createTask({ owner, repo, issueNumber, issueTitle, model, 
   const id = randomUUID().slice(0, 8)
   const task = {
     id, owner, repo, kind, issueNumber, issueTitle, local, body, model: model || 'opus',
-    status: 'queued', branch: null, base: null, prUrl: null,
+    status: 'queued', branch: null, base: null, prUrl: null, sessionId: null,
     plan: null, review: null, findings: null, question: null, summary: null, error: null, costUsd: null, staged: false,
     createdAt: Date.now(), events: [],
   }
