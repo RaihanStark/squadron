@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { api, DEMO, PARAMS } from './api.js'
 import { ACTIVE, NEEDS_YOU } from './constants.js'
+import { usePref, getPref, setPref } from './prefs.js'
 import Sidebar from './components/Sidebar.jsx'
 import RepoView from './components/RepoView.jsx'
 import AgentsPanel from './components/AgentsPanel.jsx'
@@ -11,8 +12,8 @@ import PrDetail from './components/PrDetail.jsx'
 export default function App() {
   const [repos, setRepos] = useState([])
   const [reposError, setReposError] = useState(null)
-  const [active, setActive] = useState(null)
-  const [tab, setTab] = useState('backlog')
+  const [active, setActive] = useState(() => getPref('repo', null)) // restored on load
+  const [tab, setTab] = usePref('tab', 'backlog')
   const [view, setView] = useState(PARAMS.get('view') === 'agents' ? 'agents' : 'repo') // 'repo' | 'agents' | 'pr' | 'issue' | 'changes'
   const [selectedPr, setSelectedPr] = useState(null)
   const [selectedChange, setSelectedChange] = useState(null)
@@ -30,7 +31,8 @@ export default function App() {
       .then((data) => {
         const sorted = [...data].sort((a, b) => new Date(b.updatedAt) - new Date(a.updatedAt))
         setRepos(sorted)
-        if (sorted[0]) setActive(sorted[0].nameWithOwner)
+        // Keep the saved repo if it still exists, else default to the first.
+        setActive((cur) => (sorted.some((r) => r.nameWithOwner === cur) ? cur : (sorted[0]?.nameWithOwner ?? null)))
       })
       .catch((e) => setReposError(e.message))
 
@@ -129,7 +131,7 @@ export default function App() {
 
       <div className="body">
         <Sidebar repos={repos} reposError={reposError} active={active} view={view} taskList={taskList}
-          onSelect={(name) => { setActive(name); setView('repo') }} />
+          onSelect={(name) => { setActive(name); setPref('repo', name); setView('repo') }} />
 
         <main className="main">
           {view === 'agents' ? (

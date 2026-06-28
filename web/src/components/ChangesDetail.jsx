@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { api } from '../api.js'
+import { usePref } from '../prefs.js'
 import { parseDiff } from '../diff.js'
 import { parseAnsi } from '../ansi.js'
 import DiffFile from './DiffFile.jsx'
@@ -15,8 +16,8 @@ export default function ChangesDetail({ task, onBack }) {
   const [cmdDirty, setCmdDirty] = useState(false)
   const [chatText, setChatText] = useState('')
   const [sending, setSending] = useState(false)
-  const [chatW, setChatW] = useState(400)
-  const [dockOpen, setDockOpen] = useState(false)
+  const [chatW, setChatW] = usePref('chatWidth', 400)
+  const [dockOpen, setDockOpen] = usePref('dockOpen', false)
   const logRef = useRef(null)
   const dragging = useRef(false)
 
