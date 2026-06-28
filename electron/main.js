@@ -31,8 +31,13 @@ function createWindow(port) {
     width: 1440, height: 920, minWidth: 900, minHeight: 600,
     backgroundColor: '#0d1117', title: 'Squadron',
     icon: path.join(__dirname, '..', 'build', 'icon.png'),
+    autoHideMenuBar: true,
     webPreferences: { contextIsolation: true },
   })
+  // Hide the native File/Edit/View menu bar on Linux/Windows. On macOS the menu
+  // lives in the system bar and is left intact, so clipboard shortcuts
+  // (Cmd+C/V/X/A) keep working in the chat textareas.
+  win.setMenuBarVisibility(false)
   win.loadURL(`http://localhost:${port}`)
   // Open target=_blank / external links in the system browser, not a new window.
   win.webContents.setWindowOpenHandler(({ url }) => {
