@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { api } from '../api.js'
 import { ACTIVE, WORKING_LABEL } from '../constants.js'
 import StatusBadge from './StatusBadge.jsx'
+import Markdown from './Markdown.jsx'
 
 export default function AgentDetail({ task, onOpenChanges }) {
   const logRef = useRef(null)
@@ -81,7 +82,7 @@ export default function AgentDetail({ task, onOpenChanges }) {
       <div className="log" ref={logRef}>
         {(task.events || []).map((e, i) => (
           <div key={i} className={`log-line log-${e.kind}`}>
-            {e.kind === 'text' ? <span className="log-text">{e.text}</span>
+            {e.kind === 'text' ? <Markdown className="log-text" text={e.text} />
               : e.kind === 'user' ? <span className="log-user">🧑 {e.text}</span>
               : e.kind === 'tool' ? <span className="log-tool">{e.text}</span>
               : e.kind === 'question' ? <span className="log-question">❓ {e.text}</span>
