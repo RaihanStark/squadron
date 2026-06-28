@@ -27,7 +27,7 @@ export default function RepoErrand({ repo, tasks, onStart, onOpenChanges }) {
 
   // Fresh repo → reset the composer.
   useEffect(() => { setComposing(false); setText('') }, [repo.nameWithOwner])
-  useEffect(() => { if (logRef.current) logRef.current.scrollTop = logRef.current.scrollHeight }, [live?.events?.length, live?.status])
+  useEffect(() => { if (logRef.current) logRef.current.scrollTop = logRef.current.scrollHeight }, [live?.events?.length, live?.status, live?.streaming])
 
   const idle = live?.status === 'errand_idle'
   const waiting = live?.status === 'waiting'
@@ -116,6 +116,9 @@ export default function RepoErrand({ repo, tasks, onStart, onOpenChanges }) {
                   : <span className="log-status">▸ {e.text}</span>}
               </div>
             ))}
+            {live.streaming && (
+              <div className="log-line log-text streaming"><Markdown className="log-text" text={live.streaming} /></div>
+            )}
             {working && <div className="log-working"><span className="dots"><span /><span /><span /></span>agent working…</div>}
             {!live.events?.length && !working && <div className="muted">Waiting for the agent to report in…</div>}
           </div>

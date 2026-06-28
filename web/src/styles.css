@@ -470,6 +470,8 @@ body {
 .log-status { color: var(--accent); }
 .log-tool { color: #79c0ff; }
 .log-text { color: var(--text); }
+/* Live token stream — a transient partial line, dimmed until it finalizes. */
+.streaming { opacity: 0.8; }
 .log-result { color: var(--green); font-weight: 600; }
 .log-err { color: var(--red); }
 

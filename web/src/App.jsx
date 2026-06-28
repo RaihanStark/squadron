@@ -69,7 +69,16 @@ export default function App() {
       setTasks((prev) => {
         const cur = prev[payload.id] || { id: payload.id, events: [] }
         if (payload.type === 'task') return { ...prev, [payload.id]: { ...cur, ...payload.task, events: cur.events || [] } }
-        if (payload.type === 'event') return { ...prev, [payload.id]: { ...cur, events: [...(cur.events || []), payload.event] } }
+        if (payload.type === 'stream') return { ...prev, [payload.id]: { ...cur, streaming: payload.text } }
+        if (payload.type === 'event') return {
+          ...prev,
+          [payload.id]: {
+            ...cur,
+            events: [...(cur.events || []), payload.event],
+            // The finalized text supersedes the live partial — clear it.
+            streaming: payload.event.kind === 'text' ? '' : cur.streaming,
+          },
+        }
         return prev
       })
     }

@@ -5,6 +5,7 @@ import { parseDiff } from '../diff.js'
 import { parseAnsi } from '../ansi.js'
 import DiffFile from './DiffFile.jsx'
 import ChatLine from './ChatLine.jsx'
+import Markdown from './Markdown.jsx'
 import StatusBadge from './StatusBadge.jsx'
 
 export default function ChangesDetail({ task, onBack }) {
@@ -29,7 +30,7 @@ export default function ChangesDetail({ task, onBack }) {
     api(`/api/tasks/${task.id}/diff`).then((r) => setFiles(parseDiff(r.diff || ''))).catch((e) => setError(e.message))
   }, [task?.id, task?.status])
 
-  useEffect(() => { if (logRef.current) logRef.current.scrollTop = logRef.current.scrollHeight }, [task?.events?.length, task?.status])
+  useEffect(() => { if (logRef.current) logRef.current.scrollTop = logRef.current.scrollHeight }, [task?.events?.length, task?.status, task?.streaming])
 
   // Poll preview process state.
   useEffect(() => {
@@ -125,7 +126,8 @@ export default function ChangesDetail({ task, onBack }) {
           </div>
           <div className="chat-log" ref={logRef}>
             {(task.events || []).map((e, i) => <ChatLine key={i} e={e} />)}
-            {!task.events?.length && <div className="muted">Ask the agent to change anything — it revises in this worktree and the diff updates on the left.</div>}
+            {task.streaming && <div className="chat-msg chat-agent streaming"><Markdown text={task.streaming} /></div>}
+            {!task.events?.length && !task.streaming && <div className="muted">Ask the agent to change anything — it revises in this worktree and the diff updates on the left.</div>}
             {revising && <div className="log-working"><span className="dots"><span /><span /><span /></span>working…</div>}
           </div>
           {waiting && <div className="chat-q">❓ {task.question}</div>}

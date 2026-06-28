@@ -3,8 +3,8 @@
 import * as git from './git.js'
 import * as gh from './github.js'
 import * as questions from './questions.js'
-import { openSession, runExecution, describeTool, generateChangeName } from './agent.js'
-import { updateTask, addEvent, getTask } from './tasks.js'
+import { openSession, runExecution, describeTool, generateChangeName, textDelta } from './agent.js'
+import { updateTask, addEvent, getTask, streamText } from './tasks.js'
 import * as preview from './preview.js'
 
 const sessions = new Map() // taskId -> ctx
@@ -181,6 +181,7 @@ function onErrandMessage(ctx, m) {
       if (m.subtype === 'init') addEvent(id, { kind: 'status', text: `agent online · ${m.model || ctx.model}` })
       break
     case 'assistant':
+      ctx.streamBuf = '' // finalized turn landed — drop any live partial
       for (const b of m.message?.content ?? []) {
         if (b.type === 'text' && b.text?.trim()) { ctx.lastText = b.text.trim(); addEvent(id, { kind: 'text', text: ctx.lastText }) }
         else if (b.type === 'tool_use' && !b.name?.endsWith('ask_user')) addEvent(id, { kind: 'tool', text: describeTool(b) })
@@ -203,6 +204,12 @@ function onSessionMessage(ctx, m) {
     ctx.sessionId = m.session_id
     updateTask(ctx.id, { sessionId: m.session_id })
   }
+  // Live token streaming: accumulate the current text block and push transient
+  // partials to the UI. Reset at each block boundary so text→tool→text doesn't
+  // concatenate. The finalized 'text' event still lands via the phase handlers.
+  const delta = textDelta(m)
+  if (delta != null) { ctx.streamBuf = (ctx.streamBuf || '') + delta; streamText(ctx.id, ctx.streamBuf); return }
+  if (m.type === 'stream_event' && m.event?.type === 'content_block_stop') { ctx.streamBuf = ''; return }
   if (ctx.phase === 'planning') return onPlanMessage(ctx, m)
   if (ctx.phase === 'executing') return onExecMessage(ctx, m)
   if (ctx.phase === 'errand') return onErrandMessage(ctx, m)
@@ -216,6 +223,7 @@ function onPlanMessage(ctx, m) {
       if (m.subtype === 'init') addEvent(id, { kind: 'status', text: `planner online · ${m.model || ctx.model}` })
       break
     case 'assistant':
+      ctx.streamBuf = '' // finalized turn landed — drop any live partial
       for (const b of m.message?.content ?? []) {
         if (b.type === 'text' && b.text?.trim()) { ctx.lastText = b.text.trim(); addEvent(id, { kind: 'text', text: ctx.lastText }) }
         else if (b.type === 'tool_use') {
@@ -240,6 +248,7 @@ function onExecMessage(ctx, m) {
   const { id } = ctx
   switch (m.type) {
     case 'assistant':
+      ctx.streamBuf = '' // finalized turn landed — drop any live partial
       for (const b of m.message?.content ?? []) {
         if (b.type === 'text' && b.text?.trim()) { ctx.lastText = b.text.trim(); addEvent(id, { kind: 'text', text: ctx.lastText }) }
         else if (b.type === 'tool_use' && !b.name?.endsWith('ask_user')) addEvent(id, { kind: 'tool', text: describeTool(b) })
@@ -386,7 +395,7 @@ export async function approve(taskId) {
             prompt: executePrompt(ctx.owner, ctx.repo, ctx.issue, plan),
             cwd: ctx.wt, model: ctx.model, signal: ac.signal,
             resume: ctx.sessionId,
-            onEvent: (e) => addEvent(taskId, e),
+            onEvent: (e) => e.kind === 'delta' ? streamText(taskId, e.text) : addEvent(taskId, e),
             askUser: askUserFor(taskId),
           })
       await finalize(ctx, res)
@@ -566,7 +575,7 @@ export async function startReview(task) {
     const res = await runExecution({
       prompt: reviewPrompt(owner, repo, pr, diff),
       cwd: wt, model, signal: ac.signal,
-      onEvent: (e) => addEvent(id, e),
+      onEvent: (e) => e.kind === 'delta' ? streamText(id, e.text) : addEvent(id, e),
     })
 
     await git.removeWorktree(owner, repo, id) // review captured; no further fs needed
@@ -677,7 +686,7 @@ export async function revise(taskId, instruction) {
         prompt: revisePrompt(owner, repo, issue, task.plan, instruction),
         cwd: wt, model, signal: ac.signal,
         resume: task.sessionId, // continue the warm plan→execute context instead of re-reading the repo
-        onEvent: (e) => addEvent(taskId, e),
+        onEvent: (e) => e.kind === 'delta' ? streamText(taskId, e.text) : addEvent(taskId, e),
         askUser: askUserFor(taskId),
       })
       if (ac.signal.aborted) {

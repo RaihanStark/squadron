@@ -12,7 +12,7 @@ export default function AgentDetail({ task, onOpenChanges }) {
   const [, tick] = useState(0) // re-render every second while working, to tick the timer
   useEffect(() => {
     if (logRef.current) logRef.current.scrollTop = logRef.current.scrollHeight
-  }, [task.events?.length, task.status])
+  }, [task.events?.length, task.status, task.streaming])
 
   const workingLabel = WORKING_LABEL[task.status]
   useEffect(() => {
@@ -92,6 +92,9 @@ export default function AgentDetail({ task, onOpenChanges }) {
               : <span className="log-status">▸ {e.text}</span>}
           </div>
         ))}
+        {task.streaming && (
+          <div className="log-line log-text streaming"><Markdown className="log-text" text={task.streaming} /></div>
+        )}
         {workingLabel && (
           <div className="log-working">
             <span className="dots"><span /><span /><span /></span>

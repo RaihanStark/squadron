@@ -10,6 +10,16 @@ async function sdk() {
   return _sdk
 }
 
+// Pull the text delta out of a partial-message stream event, or null if the
+// message isn't an incremental text chunk (tool input, thinking, etc.).
+export function textDelta(msg) {
+  const ev = msg?.event
+  if (msg?.type === 'stream_event' && ev?.type === 'content_block_delta' && ev.delta?.type === 'text_delta') {
+    return ev.delta.text
+  }
+  return null
+}
+
 // Short human-readable line for a tool_use block.
 export function describeTool(block) {
   const n = block.name
@@ -73,6 +83,7 @@ export async function openSession({ cwd, model = 'opus', permissionMode = 'plan'
     prompt: input.gen,
     options: {
       cwd, model, permissionMode, mcpServers,
+      includePartialMessages: true, // stream token deltas so the UI renders live
       allowDangerouslySkipPermissions: true, // arm the capability so we can flip to execute later
       hooks: makeConfineHook(cwd), // confine the agent to its worktree
       ...(planModeInstructions ? { planModeInstructions } : {}),
@@ -120,6 +131,7 @@ export async function runExecution({ prompt, cwd, model = 'opus', onEvent, signa
 
   const baseOptions = {
     cwd, model, permissionMode: 'bypassPermissions', allowDangerouslySkipPermissions: true, mcpServers,
+    includePartialMessages: true, // stream token deltas so the UI renders live
     hooks: makeConfineHook(cwd), // confine the agent to its worktree
   }
 
@@ -130,9 +142,13 @@ export async function runExecution({ prompt, cwd, model = 'opus', onEvent, signa
 
     let summary = ''
     let produced = false
+    let streamBuf = '' // running total of the live text block, reset per block
     try {
       for await (const msg of q) {
         produced = true
+        const delta = textDelta(msg)
+        if (delta != null) { streamBuf += delta; onEvent({ kind: 'delta', text: streamBuf }); continue }
+        if (msg.type === 'stream_event' && msg.event?.type === 'content_block_stop') { streamBuf = ''; continue }
         switch (msg.type) {
           case 'system':
             if (msg.subtype === 'init') onEvent({ kind: 'status', text: `${resume ? 'resumed · ' : 'executing · '}${msg.model || model}` })
