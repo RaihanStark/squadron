@@ -4,8 +4,14 @@ import { app, BrowserWindow, shell } from 'electron'
 import path from 'node:path'
 import net from 'node:net'
 import { fileURLToPath } from 'node:url'
+import { fixPath } from './fixPath.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
+
+// When launched from the OS GUI (Dock / app icon / .desktop), Electron inherits a
+// bare PATH that omits the user's toolchain (npm, git, go, …). Restore the login
+// shell's PATH up front so spawned preview/agent processes can find their tools.
+fixPath()
 
 function freePort() {
   return new Promise((resolve, reject) => {
