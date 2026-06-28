@@ -323,7 +323,11 @@ function IssueRow({ issue: it, task, onDispatch, onOpenTask }) {
           <span key={l.name} className="label" style={{ '--c': `#${l.color}` }}>{l.name}</span>
         ))}
         <span className="muted">{it.comments} 💬 · {timeAgo(it.updatedAt)}</span>
-        {task && <StatusBadge status={task.status} />}
+        {task?.prUrl ? (
+          <a className="badge pr-link" href={task.prUrl} target="_blank" rel="noreferrer" title="Squadron opened this PR — open it on GitHub for its current state">
+            PR #{task.prUrl.match(/\/pull\/(\d+)/)?.[1] || '?'} ↗
+          </a>
+        ) : task ? <StatusBadge status={task.status} /> : null}
         {inflight ? (
           <button className="dispatch view-btn" onClick={() => onOpenTask(task.id)}>
             👁 View {verb}
