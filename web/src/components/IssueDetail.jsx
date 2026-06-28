@@ -11,9 +11,11 @@ export default function IssueDetail({ repo, issue, me, task, onDispatch, onOpenT
   const [editing, setEditing] = useState(false)
   const [eTitle, setETitle] = useState('')
   const [eBody, setEBody] = useState('')
+  const [confirmingDelete, setConfirmingDelete] = useState(false)
 
   useEffect(() => {
     setEditing(false)
+    setConfirmingDelete(false)
     if (issue.local) { setFull(issue); return }
     setFull(null); setError(null)
     api(`/api/repos/${owner}/${name}/issues/${issue.number}`).then(setFull).catch((e) => setError(e.message))
@@ -52,7 +54,6 @@ export default function IssueDetail({ repo, issue, me, task, onDispatch, onOpenT
     catch (e) { alert('Failed: ' + e.message) } finally { setActing(false) }
   }
   async function del() {
-    if (!confirm('Delete this local draft?')) return
     try { await api(`/api/repos/${owner}/${name}/issues/local/${issue.id}`, { method: 'DELETE' }); onBack() } catch (e) { alert(e.message) }
   }
 
@@ -79,7 +80,15 @@ export default function IssueDetail({ repo, issue, me, task, onDispatch, onOpenT
           ) : (
             <>
               {editable && <button className="dispatch" onClick={startEdit}>✎ Edit</button>}
-              {issue.local && <button className="cancel" onClick={del}>Delete</button>}
+              {issue.local && (confirmingDelete ? (
+                <>
+                  <span className="confirm-text">Delete draft?</span>
+                  <button className="cancel" onClick={del}>Confirm</button>
+                  <button className="link-btn" onClick={() => setConfirmingDelete(false)}>Cancel</button>
+                </>
+              ) : (
+                <button className="cancel" onClick={() => setConfirmingDelete(true)}>Delete</button>
+              ))}
               {issue.local && <button className="dispatch" disabled={acting} onClick={postToGitHub}>{acting ? '…' : '🐙 Post to GitHub'}</button>}
               {inflight ? (
                 <button className="approve-btn" onClick={() => onOpenTask(task.id)}>👁 View run →</button>
