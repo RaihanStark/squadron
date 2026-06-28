@@ -8,7 +8,12 @@ import { updateTask, addEvent, getTask } from './tasks.js'
 
 const sessions = new Map() // taskId -> ctx
 
-const PLAN_INSTRUCTIONS = `You are scoping a GitHub issue for an autonomous engineer who will implement it right after you. Investigate the codebase (read-only) and produce a clear, concrete implementation plan: the approach, the specific files/functions to change, and any tests to add. Keep it tight and skimmable — markdown, a handful of bullets. The operator reviews your plan in a chat and may ask for revisions; incorporate their feedback and restate the updated plan. Do NOT call ExitPlanMode — the operator approves and triggers execution separately.`
+const PLAN_INSTRUCTIONS = `You are scoping a GitHub issue for an autonomous engineer who will implement it right after you. Investigate the codebase (read-only) and produce a clear, concrete implementation plan: the approach, the specific files/functions to change, and any tests to add. Keep it tight and skimmable — markdown, a handful of bullets. The operator reviews your plan in a chat and may ask for revisions; incorporate their feedback and restate the updated plan.
+
+Operating rules (important):
+- You are already in the repository root. Use relative paths only; never cd elsewhere or access paths outside this directory.
+- Present the plan directly as your reply. Do NOT write it to a file, do NOT call ExitPlanMode or AskUserQuestion, and do NOT discuss which tools are or aren't available.
+- To ask the operator a question, simply write it in your message — they reply in the chat. The operator approves and triggers execution separately.`
 
 function planFirstMessage(owner, repo, issue) {
   return `You are scoping work in the repository ${owner}/${repo}. The repo is checked out in your current working directory (read-only for now).
@@ -32,7 +37,7 @@ ${plan}
 --- END PLAN ---
 
 Guidelines:
-- Stay strictly inside your current working directory; use relative paths only. Do NOT cd elsewhere or touch other locations on the filesystem — those attempts are blocked.
+- You are already at the repository root. Use relative paths only; never cd elsewhere or touch other locations — those attempts are blocked and waste turns.
 - Match the project's existing style and conventions.
 - If there's a test suite, run it; add or update tests where sensible.
 - Only call the \`ask_user\` tool if a wrong guess would be expensive or irreversible.
@@ -226,9 +231,11 @@ async function finalize(ctx, res) {
 // --- Review flow ---
 
 function reviewPrompt(owner, repo, pr, diff) {
-  return `You are reviewing pull request #${pr.number} ("${pr.title}") in ${owner}/${repo}. The PR's head is checked out in your current working directory, so you can read the full code for context. Stay strictly inside this directory.
+  return `You are reviewing pull request #${pr.number} ("${pr.title}") in ${owner}/${repo}. The PR's head is already checked out in your current working directory.
 
-Review the diff below for correctness bugs, security issues, and clear quality problems. Be specific, concise, and fair — skip nitpicks unless they matter. Do NOT modify any files; this is review-only.
+The complete diff is provided below — that is your primary material. You may read files in the current directory (relative paths only) for surrounding context, but you do NOT need to explore much. You are already at the repo root: never cd elsewhere, use absolute paths, or access anything outside this directory — those attempts are blocked. Do NOT modify any files; this is review-only.
+
+Review the diff for correctness bugs, security issues, and clear quality problems. Be specific, concise, and fair — skip nitpicks unless they matter.
 
 Output your review as GitHub-flavored markdown:
 - A one or two sentence overall summary.
