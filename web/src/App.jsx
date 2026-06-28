@@ -240,8 +240,8 @@ function RepoView({ repo, tab, setTab, onDispatch, onReview, onOpenTask, onOpenP
           <button className={tab === 'backlog' ? 'on' : ''} onClick={() => setTab('backlog')}>
             Backlog {issues ? `· ${issues.length}` : ''}
           </button>
-          <button className={tab === 'review' ? 'on' : ''} onClick={() => setTab('review')}>
-            Ready to Review{readyPrs.length ? <span className="tab-badge">{readyPrs.length}</span> : ''}
+          <button className={`${tab === 'review' ? 'on' : ''} ${readyPrs.length ? 'has-ready' : ''}`} onClick={() => setTab('review')}>
+            Ready to Review {pulls ? `· ${readyPrs.length}` : ''}
           </button>
           <button className={tab === 'prs' ? 'on' : ''} onClick={() => setTab('prs')}>
             Pull Requests {pulls ? `· ${openPrs.length}` : ''}
