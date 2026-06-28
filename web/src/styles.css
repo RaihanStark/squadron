@@ -207,6 +207,19 @@ body {
 .pr-head h1 a { color: var(--muted); text-decoration: none; }
 .link-btn { background: none; border: none; color: var(--accent); cursor: pointer; font-size: 12px; padding: 0 0 6px; }
 
+/* PR detail split: diff on the left, optional Fix sidebar docked on the right. */
+.pr-body { display: flex; flex: 1; min-height: 0; }
+.pr-main { flex: 1; min-width: 0; display: flex; flex-direction: column; min-height: 0; overflow: hidden; }
+
+/* Deliberately low-key — a subtle ghost button that opens the quick-fix sidebar. */
+.fix-toggle {
+  background: none; border: 1px solid transparent; color: var(--muted);
+  padding: 4px 8px; border-radius: 6px; cursor: pointer; font-size: 12px;
+}
+.fix-toggle:hover { color: var(--text); border-color: var(--border); }
+.fix-toggle.on { color: var(--text); border-color: var(--accent-dim); }
+.fix-toggle.busy { color: var(--accent); }
+
 .ci-badge { font-size: 11px; padding: 1px 8px; border-radius: 10px; border: 1px solid var(--border); white-space: nowrap; }
 .ci-pass { color: var(--green); border-color: #1f6f33; }
 .ci-fail { color: var(--red); border-color: #6f2420; }
