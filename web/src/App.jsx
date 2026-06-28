@@ -323,11 +323,9 @@ function IssueRow({ issue: it, task, onDispatch, onOpenTask }) {
           <span key={l.name} className="label" style={{ '--c': `#${l.color}` }}>{l.name}</span>
         ))}
         <span className="muted">{it.comments} 💬 · {timeAgo(it.updatedAt)}</span>
-        {task?.prUrl ? (
-          <a className="badge pr-link" href={task.prUrl} target="_blank" rel="noreferrer" title="Squadron opened this PR — open it on GitHub for its current state">
-            PR #{task.prUrl.match(/\/pull\/(\d+)/)?.[1] || '?'} ↗
-          </a>
-        ) : task ? <StatusBadge status={task.status} /> : null}
+        {/* Don't assert PR state from a single stale task — an issue can have many
+            PRs, and we don't poll their status. The #number links to GitHub for that. */}
+        {task && task.status !== 'pr_open' && <StatusBadge status={task.status} />}
         {inflight ? (
           <button className="dispatch view-btn" onClick={() => onOpenTask(task.id)}>
             👁 View {verb}
