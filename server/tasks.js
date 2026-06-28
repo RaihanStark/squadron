@@ -16,7 +16,7 @@ bus.setMaxListeners(0)
 // process restart, so on load we mark them interrupted. 'planned' is NOT here:
 // its plan is captured, so it can still be approved after a restart.
 const NEEDS_SESSION = new Set([
-  'queued', 'preparing', 'planning', 'running', 'waiting', 'committing', 'pushing', 'opening_pr',
+  'queued', 'preparing', 'planning', 'running', 'errand_idle', 'waiting', 'committing', 'pushing', 'opening_pr',
   'reviewing', 'posting',
 ])
 

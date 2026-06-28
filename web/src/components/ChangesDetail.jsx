@@ -87,7 +87,7 @@ export default function ChangesDetail({ task, onBack }) {
       <div className="main-head pr-head ide-head">
         <div className="issue-head-main">
           <button className="link-btn" onClick={onBack}>← back</button>
-          <h1>Changes for #{task.issueNumber} <span className="muted">{task.issueTitle}</span></h1>
+          <h1>Changes for {task.issueNumber ? `#${task.issueNumber}` : 'quick task'} <span className="muted">{task.issueTitle}</span></h1>
         </div>
         <div className="agent-actions">
           <StatusBadge status={task.status} />

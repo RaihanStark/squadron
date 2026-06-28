@@ -114,6 +114,17 @@ export default function App() {
     } catch (e) { alert('Review failed: ' + e.message) }
   }
 
+  // Plan-less "quick task": create an errand and surface it in the repo sidebar.
+  async function startErrand(repoObj, instruction) {
+    const [owner, repo] = repoObj.nameWithOwner.split('/')
+    const task = await api(`/api/repos/${owner}/${repo}/errand`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ instruction, defaultBranch: repoObj.defaultBranchRef?.name }),
+    })
+    setTasks((prev) => ({ ...prev, [task.id]: { ...(prev[task.id] || {}), ...task, events: prev[task.id]?.events || [] } }))
+    return task
+  }
+
   const openTask = (taskId) => { setSelectedTask(taskId); setView('agents') }
   const openPr = (repoObj, pr) => { setSelectedPr({ repo: repoObj, pr }); setView('pr') }
   const openChanges = (taskId) => { setSelectedChange(taskId); setView('changes') }
@@ -176,7 +187,7 @@ export default function App() {
               onReview={review} onBack={backToRepo} />
           ) : activeRepo ? (
             <RepoView key={active} repo={activeRepo} tab={tab} setTab={setTab} onDispatch={dispatch} onReview={review}
-              onOpenTask={openTask} onOpenPr={openPr} onOpenChanges={openChanges} onOpenIssue={openIssue} tasks={taskList} />
+              onOpenTask={openTask} onOpenPr={openPr} onOpenChanges={openChanges} onOpenIssue={openIssue} onStartErrand={startErrand} tasks={taskList} />
           ) : (
             <div className="empty">{repos.length ? 'Select a repo to begin.' : 'Add a repo from the sidebar to begin.'}</div>
           )}

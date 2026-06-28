@@ -1,16 +1,19 @@
 import { useEffect, useState } from 'react'
 import { api } from '../api.js'
+import { usePref } from '../prefs.js'
 import NewIssueForm from './NewIssueForm.jsx'
 import IssueRow from './IssueRow.jsx'
 import ChangeCard from './ChangeCard.jsx'
 import PrCard from './PrCard.jsx'
+import RepoErrand from './RepoErrand.jsx'
 
-export default function RepoView({ repo, tab, setTab, onDispatch, onReview, onOpenTask, onOpenPr, onOpenChanges, onOpenIssue, tasks }) {
+export default function RepoView({ repo, tab, setTab, onDispatch, onReview, onOpenTask, onOpenPr, onOpenChanges, onOpenIssue, onStartErrand, tasks }) {
   const [owner, name] = repo.nameWithOwner.split('/')
   const [issues, setIssues] = useState(null)
   const [pulls, setPulls] = useState(null)
   const [error, setError] = useState(null)
   const [creating, setCreating] = useState(false)
+  const [errandOpen, setErrandOpen] = usePref('errandOpen', false)
 
   const loadIssues = () => api(`/api/repos/${owner}/${name}/issues`).then(setIssues).catch((e) => setError(e.message))
 
@@ -46,11 +49,15 @@ export default function RepoView({ repo, tab, setTab, onDispatch, onReview, onOp
           <button className={tab === 'prs' ? 'on' : ''} onClick={() => setTab('prs')}>
             Pull Requests {pulls ? `· ${pulls.length}` : ''}
           </button>
+          <button className={`errand-toggle ${errandOpen ? 'on' : ''}`} onClick={() => setErrandOpen((o) => !o)}>
+            🤖 Quick task
+          </button>
         </div>
       </div>
 
       {error && <div className="error pad">⚠ {error}</div>}
 
+      <div className="repo-body">
       <div className="list">
         {tab === 'backlog' && (
           <>
@@ -79,6 +86,8 @@ export default function RepoView({ repo, tab, setTab, onDispatch, onReview, onOp
               ? pulls.map((pr) => <PrCard key={pr.number} pr={pr} task={undefined} onOpenPr={() => onOpenPr(repo, pr)} cta="Review →" />)
               : <div className="muted pad">No open PRs.</div>
         )}
+      </div>
+      {errandOpen && <RepoErrand repo={repo} tasks={tasks} onStart={onStartErrand} onOpenChanges={onOpenChanges} />}
       </div>
     </>
   )

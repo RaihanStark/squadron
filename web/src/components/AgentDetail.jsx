@@ -62,7 +62,7 @@ export default function AgentDetail({ task, onOpenChanges }) {
     <>
       <div className="agent-head">
         <div>
-          <h1>{task.owner}/{task.repo} <span className="muted">#{task.issueNumber}</span></h1>
+          <h1>{task.owner}/{task.repo} {task.issueNumber ? <span className="muted">#{task.issueNumber}</span> : <span className="muted">⚡ quick task</span>}</h1>
           <div className="muted">{task.issueTitle}</div>
         </div>
         <div className="agent-actions">

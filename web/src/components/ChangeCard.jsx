@@ -4,7 +4,7 @@ export default function ChangeCard({ task, onOpen }) {
   return (
     <div className="card card-click" onClick={onOpen}>
       <div className="card-main">
-        <span className="num">#{task.issueNumber}</span>
+        {task.issueNumber ? <span className="num">#{task.issueNumber}</span> : <span className="num">⚡</span>}
         <span className="title">{task.issueTitle}</span>
       </div>
       <div className="card-meta">

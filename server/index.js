@@ -156,6 +156,23 @@ app.post('/api/repos/:owner/:repo/review', handle(async (req) => {
   return task
 }))
 
+// Start a plan-less interactive "errand": a quick task whose changes land in
+// Ready to Review without the plan/approve ceremony. Streams over /api/stream.
+app.post('/api/repos/:owner/:repo/errand', handle(async (req) => {
+  const { owner, repo } = req.params
+  const { instruction, model, defaultBranch } = req.body || {}
+  const text = (instruction || '').trim()
+  if (!text) throw new Error('instruction is required')
+  const task = await createTask({
+    owner, repo, issueNumber: null, issueTitle: text.slice(0, 80), kind: 'errand', local: true, body: text, model,
+  })
+  runner.startErrand(task, { instruction: text, defaultBranch }).catch((e) => console.error('startErrand crashed', e))
+  return task
+}))
+
+// Stage an errand's working-tree changes into Ready to Review.
+app.post('/api/tasks/:id/stage', handle(async (req) => ({ staged: await runner.stageErrand(req.params.id) })))
+
 // Send a message into a live planning chat.
 app.post('/api/tasks/:id/message', handle(async (req) => {
   const text = (req.body?.text || '').trim()
