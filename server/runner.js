@@ -9,6 +9,20 @@ import * as preview from './preview.js'
 
 const sessions = new Map() // taskId -> ctx
 
+// The ask_user handler for a task: surfaces the question to the operator and
+// blocks until they answer. Shared by execution, revision, and the reused
+// planning session so the tool behaves identically everywhere.
+function askUserFor(taskId) {
+  return async (question) => {
+    addEvent(taskId, { kind: 'question', text: question })
+    await updateTask(taskId, { status: 'waiting', question })
+    const reply = await questions.register(taskId)
+    await updateTask(taskId, { status: 'running', question: null })
+    addEvent(taskId, { kind: 'answer', text: reply })
+    return reply
+  }
+}
+
 const PLAN_INSTRUCTIONS = `You are scoping a GitHub issue for an autonomous engineer who will implement it right after you. Investigate the codebase (read-only) and produce a clear, concrete implementation plan: the approach, the specific files/functions to change, and any tests to add. Keep it tight and skimmable — markdown, a handful of bullets. The operator reviews your plan in a chat and may ask for revisions; incorporate their feedback and restate the updated plan.
 
 Operating rules (important):
@@ -88,7 +102,8 @@ export async function startPlan(task, { defaultBranch } = {}) {
 
     const handle = await openSession({
       cwd: wt, model, permissionMode: 'plan', planModeInstructions: PLAN_INSTRUCTIONS,
-      onMessage: (m) => onPlanMessage(ctx, m),
+      askUser: askUserFor(id), // armed now so ask_user works when we reuse this session to execute
+      onMessage: (m) => onSessionMessage(ctx, m),
     })
     ctx.handle = handle
     handle.send(planFirstMessage(owner, repo, issue, tree))
@@ -100,9 +115,23 @@ export async function startPlan(task, { defaultBranch } = {}) {
   }
 }
 
+// Every message from the long-lived session funnels through here. The session
+// starts in plan mode, then (on approval) flips to autonomous execution in the
+// SAME conversation — so we route by phase rather than tearing it down.
+function onSessionMessage(ctx, m) {
+  // Capture the session id once so we can resume this warm context later even
+  // if the live handle is gone (server restart, revise).
+  if (m.session_id && !ctx.sessionId) {
+    ctx.sessionId = m.session_id
+    updateTask(ctx.id, { sessionId: m.session_id })
+  }
+  if (ctx.phase === 'planning') return onPlanMessage(ctx, m)
+  if (ctx.phase === 'executing') return onExecMessage(ctx, m)
+  // 'cancelled' / anything else: ignore trailing messages.
+}
+
 function onPlanMessage(ctx, m) {
   const { id } = ctx
-  if (ctx.phase !== 'planning') return // execution messages are handled by runExecution
   switch (m.type) {
     case 'system':
       if (m.subtype === 'init') addEvent(id, { kind: 'status', text: `planner online · ${m.model || ctx.model}` })
@@ -122,6 +151,47 @@ function onPlanMessage(ctx, m) {
       updateTask(id, { status: 'planned', plan: ctx.plan })
       break
   }
+}
+
+// Execution messages from the reused planning session. Mirrors runExecution's
+// event mapping, then resolves ctx.execResolve when the run finishes so approve()
+// can finalize. This is the warm path: the agent already explored the repo while
+// planning, so there's no cold re-discovery here.
+function onExecMessage(ctx, m) {
+  const { id } = ctx
+  switch (m.type) {
+    case 'assistant':
+      for (const b of m.message?.content ?? []) {
+        if (b.type === 'text' && b.text?.trim()) { ctx.lastText = b.text.trim(); addEvent(id, { kind: 'text', text: ctx.lastText }) }
+        else if (b.type === 'tool_use' && !b.name?.endsWith('ask_user')) addEvent(id, { kind: 'tool', text: describeTool(b) })
+      }
+      break
+    case 'result': {
+      const summary = m.result || ctx.lastText || ''
+      const ok = !m.is_error && m.subtype === 'success'
+      addEvent(id, { kind: 'result', ok, text: ok ? 'execution finished' : `stopped: ${m.subtype}`, costUsd: m.total_cost_usd, numTurns: m.num_turns })
+      ctx.execResolve?.({ ok, summary, costUsd: m.total_cost_usd, subtype: m.subtype })
+      break
+    }
+  }
+}
+
+// Continue the warm planning session as an autonomous execution: flip the
+// permission mode and send the execute prompt into the SAME conversation.
+// Resolves with the execution result (or an aborted marker).
+function continueAsExecution(ctx, plan, ac) {
+  return new Promise((resolve) => {
+    ctx.execResolve = resolve
+    const onAbort = () => { ctx.handle?.interrupt(); resolve({ ok: false, aborted: true, summary: ctx.lastText || '' }) }
+    if (ac.signal.aborted) return onAbort()
+    ac.signal.addEventListener('abort', onAbort, { once: true })
+    Promise.resolve(ctx.handle.setMode('bypassPermissions'))
+      .then(() => ctx.handle.send(executePrompt(ctx.owner, ctx.repo, ctx.issue, plan)))
+      .catch((err) => resolve({ ok: false, summary: ctx.lastText || '', error: err.message }))
+  }).finally(() => {
+    ctx.execResolve = null
+    try { ctx.handle?.close() } catch { /* already closed */ }
+  })
 }
 
 export function sendMessage(taskId, text) {
@@ -160,6 +230,7 @@ export async function approve(taskId) {
       id: taskId, owner: task.owner, repo: task.repo, issue,
       wt: git.worktreePathFor(taskId), branch: task.branch, base: task.base,
       model: task.model, phase: 'planning', plan: task.plan, lastText: task.plan,
+      sessionId: task.sessionId || null, // resume the warm planning context if we still have it
     }
     sessions.set(taskId, ctx)
   }
@@ -169,11 +240,6 @@ export async function approve(taskId) {
   const plan = ctx.plan || ctx.lastText
 
   addEvent(taskId, { kind: 'status', text: 'Plan approved — starting execution…' })
-  if (ctx.handle) {
-    ctx.handle.interrupt()
-    ctx.handle.close()
-    await ctx.handle.done.catch(() => {})
-  }
 
   const ac = new AbortController()
   ctx.ac = ac
@@ -182,19 +248,19 @@ export async function approve(taskId) {
   // Run execution in the background; the HTTP request returns immediately.
   ;(async () => {
     try {
-      const res = await runExecution({
-        prompt: executePrompt(ctx.owner, ctx.repo, ctx.issue, plan),
-        cwd: ctx.wt, model: ctx.model, signal: ac.signal,
-        onEvent: (e) => addEvent(taskId, e),
-        askUser: async (question) => {
-          addEvent(taskId, { kind: 'question', text: question })
-          await updateTask(taskId, { status: 'waiting', question })
-          const reply = await questions.register(taskId)
-          await updateTask(taskId, { status: 'running', question: null })
-          addEvent(taskId, { kind: 'answer', text: reply })
-          return reply
-        },
-      })
+      // Prefer continuing the warm planning session — the agent already read the
+      // repo while planning, so we just flip it to autonomous and keep going.
+      // Fall back to resuming (or, last resort, cold-starting) a fresh run when
+      // the live handle is gone (server restarted before approval).
+      const res = ctx.handle
+        ? await continueAsExecution(ctx, plan, ac)
+        : await runExecution({
+            prompt: executePrompt(ctx.owner, ctx.repo, ctx.issue, plan),
+            cwd: ctx.wt, model: ctx.model, signal: ac.signal,
+            resume: ctx.sessionId,
+            onEvent: (e) => addEvent(taskId, e),
+            askUser: askUserFor(taskId),
+          })
       await finalize(ctx, res)
     } catch (err) {
       console.error(`[exec ${taskId}]`, err)
@@ -482,15 +548,9 @@ export async function revise(taskId, instruction) {
       const res = await runExecution({
         prompt: revisePrompt(owner, repo, issue, task.plan, instruction),
         cwd: wt, model, signal: ac.signal,
+        resume: task.sessionId, // continue the warm plan→execute context instead of re-reading the repo
         onEvent: (e) => addEvent(taskId, e),
-        askUser: async (q) => {
-          addEvent(taskId, { kind: 'question', text: q })
-          await updateTask(taskId, { status: 'waiting', question: q })
-          const reply = await questions.register(taskId)
-          await updateTask(taskId, { status: 'running', question: null })
-          addEvent(taskId, { kind: 'answer', text: reply })
-          return reply
-        },
+        askUser: askUserFor(taskId),
       })
       if (ac.signal.aborted) {
         addEvent(taskId, { kind: 'status', text: 'Revision stopped — prior changes kept.' })
