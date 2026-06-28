@@ -23,8 +23,8 @@ function timeAgo(iso) {
   return 'just now'
 }
 
-const ACTIVE = new Set(['queued', 'preparing', 'planning', 'planned', 'running', 'waiting', 'committing', 'pushing', 'opening_pr', 'reviewing', 'reviewed', 'posting'])
-const NEEDS_YOU = new Set(['planned', 'waiting', 'reviewed'])
+const ACTIVE = new Set(['queued', 'preparing', 'planning', 'planned', 'running', 'waiting', 'committing', 'changes_ready', 'pushing', 'opening_pr', 'reviewing', 'reviewed', 'posting'])
+const NEEDS_YOU = new Set(['planned', 'waiting', 'reviewed', 'changes_ready'])
 // Statuses where the agent is actively chewing (so the UI shows a live "working"
 // indicator) — excludes the awaiting-you states (planned/reviewed/waiting).
 const WORKING_LABEL = {
@@ -34,7 +34,8 @@ const WORKING_LABEL = {
 }
 const STATUS_LABEL = {
   queued: 'queued', preparing: 'preparing', planning: 'planning', planned: 'plan ready',
-  running: 'running', waiting: 'needs you', committing: 'committing', pushing: 'pushing',
+  running: 'running', waiting: 'needs you', committing: 'committing',
+  changes_ready: 'changes ready', pushing: 'pushing',
   opening_pr: 'opening PR', pr_open: 'PR open', no_changes: 'no changes',
   reviewing: 'reviewing', reviewed: 'review ready', posting: 'posting', review_posted: 'review posted',
   cancelled: 'cancelled', error: 'error', interrupted: 'interrupted',
@@ -47,6 +48,7 @@ export default function App() {
   const [tab, setTab] = useState('backlog')
   const [view, setView] = useState(PARAMS.get('view') === 'agents' ? 'agents' : 'repo') // 'repo' | 'agents' | 'pr'
   const [selectedPr, setSelectedPr] = useState(null) // { repo, pr }
+  const [selectedChange, setSelectedChange] = useState(null) // taskId of a changes_ready task
 
   // Tasks keyed by id, kept live via SSE.
   const [tasks, setTasks] = useState({})
@@ -151,6 +153,11 @@ export default function App() {
     setView('pr')
   }
 
+  function openChanges(taskId) {
+    setSelectedChange(taskId)
+    setView('changes')
+  }
+
   return (
     <div className="app">
       <header className="topbar">
@@ -187,7 +194,9 @@ export default function App() {
 
         <main className="main">
           {view === 'agents' ? (
-            <AgentsPanel tasks={taskList} selected={selectedTask} setSelected={setSelectedTask} />
+            <AgentsPanel tasks={taskList} selected={selectedTask} setSelected={setSelectedTask} onOpenChanges={openChanges} />
+          ) : view === 'changes' && selectedChange ? (
+            <ChangesDetail task={taskList.find((t) => t.id === selectedChange)} onBack={() => setView('repo')} />
           ) : view === 'pr' && selectedPr ? (
             <PrDetail
               repo={selectedPr.repo}
@@ -197,7 +206,7 @@ export default function App() {
               onBack={() => setView('repo')}
             />
           ) : activeRepo ? (
-            <RepoView key={active} repo={activeRepo} tab={tab} setTab={setTab} onDispatch={dispatch} onReview={review} onOpenTask={openTask} onOpenPr={openPr} tasks={taskList} />
+            <RepoView key={active} repo={activeRepo} tab={tab} setTab={setTab} onDispatch={dispatch} onReview={review} onOpenTask={openTask} onOpenPr={openPr} onOpenChanges={openChanges} tasks={taskList} />
           ) : (
             <div className="empty">Select a repo to begin.</div>
           )}
@@ -207,7 +216,7 @@ export default function App() {
   )
 }
 
-function RepoView({ repo, tab, setTab, onDispatch, onReview, onOpenTask, onOpenPr, tasks }) {
+function RepoView({ repo, tab, setTab, onDispatch, onReview, onOpenTask, onOpenPr, onOpenChanges, tasks }) {
   const [owner, name] = repo.nameWithOwner.split('/')
   const [issues, setIssues] = useState(null)
   const [pulls, setPulls] = useState(null)
@@ -219,18 +228,15 @@ function RepoView({ repo, tab, setTab, onDispatch, onReview, onOpenTask, onOpenP
     api(`/api/repos/${owner}/${name}/pulls`).then(setPulls).catch((e) => setError(e.message))
   }, [repo.nameWithOwner])
 
-  // Map number -> latest task per kind, so a dispatched issue / PR shows live status.
+  // Latest issue task (plan/execute) per issue, so the backlog shows live status.
   const taskByIssue = {}
-  const taskByPr = {}
   for (const t of tasks) {
-    if (`${t.owner}/${t.repo}` !== repo.nameWithOwner) continue
-    if ((t.kind || 'plan') === 'review') taskByPr[t.issueNumber] = t
-    else taskByIssue[t.issueNumber] = t
+    if (`${t.owner}/${t.repo}` === repo.nameWithOwner && (t.kind || 'plan') !== 'review') taskByIssue[t.issueNumber] = t
   }
 
-  // A PR whose AI review is done but not yet posted is "Ready to Review".
-  const readyPrs = (pulls || []).filter((p) => taskByPr[p.number]?.status === 'reviewed')
-  const openPrs = (pulls || []).filter((p) => taskByPr[p.number]?.status !== 'reviewed')
+  // "Ready to Review" = local agent changes, committed in a worktree, not yet pushed.
+  const changeTasks = tasks.filter((t) =>
+    `${t.owner}/${t.repo}` === repo.nameWithOwner && (t.kind || 'plan') !== 'review' && t.status === 'changes_ready')
 
   return (
     <>
@@ -240,11 +246,11 @@ function RepoView({ repo, tab, setTab, onDispatch, onReview, onOpenTask, onOpenP
           <button className={tab === 'backlog' ? 'on' : ''} onClick={() => setTab('backlog')}>
             Backlog {issues ? `· ${issues.length}` : ''}
           </button>
-          <button className={`${tab === 'review' ? 'on' : ''} ${readyPrs.length ? 'has-ready' : ''}`} onClick={() => setTab('review')}>
-            Ready to Review {pulls ? `· ${readyPrs.length}` : ''}
+          <button className={`${tab === 'review' ? 'on' : ''} ${changeTasks.length ? 'has-ready' : ''}`} onClick={() => setTab('review')}>
+            Ready to Review · {changeTasks.length}
           </button>
           <button className={tab === 'prs' ? 'on' : ''} onClick={() => setTab('prs')}>
-            Pull Requests {pulls ? `· ${openPrs.length}` : ''}
+            Pull Requests {pulls ? `· ${pulls.length}` : ''}
           </button>
         </div>
       </div>
@@ -262,21 +268,16 @@ function RepoView({ repo, tab, setTab, onDispatch, onReview, onOpenTask, onOpenP
         )}
 
         {tab === 'review' && (
-          pulls === null ? <div className="muted pad">Loading…</div>
-            : readyPrs.length
-              ? readyPrs.map((pr) => (
-                <PrCard key={pr.number} pr={pr} task={taskByPr[pr.number]} onOpenPr={() => onOpenPr(repo, pr)} cta="Post →" />
-              ))
-              : <div className="muted pad">Empty — no AI reviews are staged yet. Open a PR in <strong>Pull Requests</strong> and run 🤖 AI Review; the result waits here until you post it to GitHub.</div>
+          changeTasks.length
+            ? changeTasks.map((t) => <ChangeCard key={t.id} task={t} onOpen={() => onOpenChanges(t.id)} />)
+            : <div className="muted pad">Empty — no local changes staged. Plan an issue in <strong>Backlog</strong> and approve it; the agent's changes land here (committed locally, not pushed) for you to review before opening a PR.</div>
         )}
 
         {tab === 'prs' && (
           pulls === null ? <div className="muted pad">Loading sorties…</div>
-            : openPrs.length
-              ? openPrs.map((pr) => (
-                <PrCard key={pr.number} pr={pr} task={taskByPr[pr.number]} onOpenPr={() => onOpenPr(repo, pr)} cta="Review →" />
-              ))
-              : <div className="muted pad">No open PRs awaiting review.</div>
+            : pulls.length
+              ? pulls.map((pr) => <PrCard key={pr.number} pr={pr} task={undefined} onOpenPr={() => onOpenPr(repo, pr)} cta="Review →" />)
+              : <div className="muted pad">No open PRs.</div>
         )}
       </div>
     </>
@@ -344,6 +345,76 @@ function IssueRow({ issue: it, task, onDispatch, onOpenTask }) {
         )}
       </div>
     </div>
+  )
+}
+
+function ChangeCard({ task, onOpen }) {
+  return (
+    <div className="card card-click" onClick={onOpen}>
+      <div className="card-main">
+        <span className="num">#{task.issueNumber}</span>
+        <span className="title">{task.issueTitle}</span>
+      </div>
+      <div className="card-meta">
+        {task.branch && <span className="badge">{task.branch}</span>}
+        {task.model && <span className="badge model-badge">{task.model}</span>}
+        <StatusBadge status={task.status} />
+        <span className="chev">Review changes →</span>
+      </div>
+    </div>
+  )
+}
+
+function ChangesDetail({ task, onBack }) {
+  const [files, setFiles] = useState(null)
+  const [error, setError] = useState(null)
+  const [pushing, setPushing] = useState(false)
+
+  useEffect(() => {
+    if (!task) return
+    setFiles(null); setError(null)
+    api(`/api/tasks/${task.id}/diff`).then((r) => setFiles(parseDiff(r.diff || ''))).catch((e) => setError(e.message))
+  }, [task?.id])
+
+  if (!task) return <div className="empty">These changes are no longer available.</div>
+
+  async function push() {
+    setPushing(true)
+    try { await api(`/api/tasks/${task.id}/push`, { method: 'POST' }); onBack() }
+    catch (e) { alert('Push failed: ' + e.message) }
+    finally { setPushing(false) }
+  }
+  async function discard() {
+    if (!confirm('Discard these local changes? This cancels the task and removes its worktree.')) return
+    try { await api(`/api/tasks/${task.id}/cancel`, { method: 'POST' }); onBack() } catch (e) { alert(e.message) }
+  }
+
+  const ready = task.status === 'changes_ready'
+  return (
+    <>
+      <div className="main-head pr-head">
+        <div>
+          <button className="link-btn" onClick={onBack}>← back</button>
+          <h1>Changes for #{task.issueNumber} <span className="muted">{task.issueTitle}</span></h1>
+        </div>
+        <div className="agent-actions">
+          <StatusBadge status={task.status} />
+          {task.branch && <span className="badge">{task.branch}</span>}
+          {ready && <button className="cancel" onClick={discard}>Discard</button>}
+          {ready && <button className="approve-btn" disabled={pushing} onClick={push}>{pushing ? 'Pushing…' : '⬆ Push & Open PR'}</button>}
+          {task.prUrl && <a className="dispatch" href={task.prUrl} target="_blank" rel="noreferrer">Open PR ↗</a>}
+        </div>
+      </div>
+
+      {task.summary && <div className="review-summary">🤖 {task.summary}</div>}
+
+      <div className="diff-view">
+        {error && <div className="error pad">⚠ {error}</div>}
+        {files === null && !error && <div className="muted pad">Loading changes…</div>}
+        {files && !files.length && <div className="muted pad">No changes in the working tree.</div>}
+        {files && files.map((f, fi) => <DiffFile key={fi} file={f} findings={[]} />)}
+      </div>
+    </>
   )
 }
 
@@ -465,7 +536,7 @@ function StatusBadge({ status }) {
   return <span className={`status status-${status}`}>{STATUS_LABEL[status] || status}</span>
 }
 
-function AgentsPanel({ tasks, selected, setSelected }) {
+function AgentsPanel({ tasks, selected, setSelected, onOpenChanges }) {
   const sel = tasks.find((t) => t.id === selected) || tasks[0]
   return (
     <div className="agents">
@@ -487,13 +558,13 @@ function AgentsPanel({ tasks, selected, setSelected }) {
         ))}
       </div>
       <div className="agent-detail">
-        {sel ? <AgentDetail task={sel} /> : <div className="empty">No agent selected.</div>}
+        {sel ? <AgentDetail task={sel} onOpenChanges={onOpenChanges} /> : <div className="empty">No agent selected.</div>}
       </div>
     </div>
   )
 }
 
-function AgentDetail({ task }) {
+function AgentDetail({ task, onOpenChanges }) {
   const logRef = useRef(null)
   const [reply, setReply] = useState('')
   const [sending, setSending] = useState(false)
@@ -558,7 +629,10 @@ function AgentDetail({ task }) {
           <StatusBadge status={task.status} />
           {task.model && <span className="badge model-badge">{task.model}</span>}
           {task.branch && <span className="badge">{task.branch}</span>}
-          {busy && <button className="cancel" onClick={() => post('cancel')}>Cancel</button>}
+          {busy && task.status !== 'changes_ready' && <button className="cancel" onClick={() => post('cancel')}>Cancel</button>}
+          {task.status === 'changes_ready' && onOpenChanges && (
+            <button className="approve-btn" onClick={() => onOpenChanges(task.id)}>Review changes →</button>
+          )}
           {task.prUrl && <a className="dispatch" href={task.prUrl} target="_blank" rel="noreferrer">Open PR ↗</a>}
         </div>
       </div>

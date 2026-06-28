@@ -4,6 +4,7 @@ import express from 'express'
 import * as github from './github.js'
 import * as runner from './runner.js'
 import * as questions from './questions.js'
+import * as git from './git.js'
 import { bus, listTasks, getTask, createTask, findActiveByIssue } from './tasks.js'
 
 const app = express()
@@ -72,8 +73,18 @@ app.post('/api/tasks/:id/message', handle(async (req) => {
   return { sent: runner.sendMessage(req.params.id, text) }
 }))
 
-// Approve the current plan and kick off autonomous execution → PR.
+// Approve the current plan and kick off autonomous execution (local changes).
 app.post('/api/tasks/:id/approve', handle(async (req) => ({ approved: await runner.approve(req.params.id) })))
+
+// The diff of a task's local changes (the agent's work), for review before push.
+app.get('/api/tasks/:id/diff', handle(async (req) => {
+  const t = await getTask(req.params.id)
+  if (!t) throw new Error('task not found')
+  return { diff: await git.taskDiff(req.params.id, t.base) }
+}))
+
+// Push the reviewed local changes and open the PR.
+app.post('/api/tasks/:id/push', handle(async (req) => ({ pushed: await runner.pushTask(req.params.id) })))
 
 app.get('/api/tasks', handle(() => listTasks()))
 

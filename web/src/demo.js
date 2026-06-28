@@ -125,10 +125,46 @@ export const reviewTask = {
   events: [],
 }
 
+const CHANGE_DIFF = `diff --git a/src/import.js b/src/import.js
+new file mode 100644
+--- /dev/null
++++ b/src/import.js
+@@ -0,0 +1,9 @@
++import { parse } from './csv.js'
++
++export function importTransactions(text) {
++  const rows = parse(text)
++  return rows.map((r) => ({
++    date: r.Date,
++    amount: Number(r.Amount),
++    note: r.Description,
++  }))
++}
+diff --git a/src/app.js b/src/app.js
+--- a/src/app.js
++++ b/src/app.js
+@@ -12,6 +12,7 @@ const cli = {
+   add: addTransaction,
+   list: listTransactions,
+   export: exportCsv,
++  import: importTransactions,
+ }
+`
+
+// A staged local change set (agent committed in a worktree, not pushed).
+export const changeTask = {
+  id: 'tchg', owner: 'acme', repo: 'financy', kind: 'plan', issueNumber: 35,
+  issueTitle: 'Add CSV import for transactions', status: 'changes_ready', model: 'opus',
+  branch: 'squadron/tchg', base: 'main', costUsd: 0.21, createdAt: now - 30000,
+  summary: 'Added a CSV importer (src/import.js) that parses rows into transaction objects and wired an `import` command into the CLI. Mirrors the existing export path.',
+  events: [],
+}
+
 export function demoApi(path) {
+  if (/\/tasks\/tchg\/diff$/.test(path)) return Promise.resolve({ diff: CHANGE_DIFF })
   if (/\/pulls\/\d+\/diff$/.test(path)) return Promise.resolve({ diff: DEMO_DIFF })
   if (path === '/api/repos') return Promise.resolve(repos)
-  if (path === '/api/tasks') return Promise.resolve([reviewTask, ...tasks])
+  if (path === '/api/tasks') return Promise.resolve([changeTask, reviewTask, ...tasks])
   const m = path.match(/^\/api\/repos\/([^/]+)\/([^/]+)\/(issues|pulls)/)
   if (m) {
     const key = `${m[1]}/${m[2]}`

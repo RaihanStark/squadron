@@ -19,14 +19,21 @@ any issue to send an agent at it.
 
 ## Plan first, then execute
 
-You don't fire an agent blind. Clicking **📋 Plan** starts a **read-only** planning
-session: the agent investigates the code and proposes a concrete plan, and you refine it
-in a chat ("use Argon2id, not the keyring"). Nothing is written yet. When you're happy,
-hit **✅ Approve & Dispatch** — the approved plan becomes the spec for an autonomous
-execution run that edits the code, then opens a pull request. The plan rides along in the
-PR description, so reviewers see the intended approach too.
+You don't fire an agent blind, and nothing reaches GitHub without you. Clicking
+**📋 Plan** starts a **read-only** planning session: the agent investigates the code and
+proposes a concrete plan, and you refine it in a chat ("use Argon2id, not the keyring").
+Nothing is written yet. When you're happy, hit **✅ Approve & Dispatch** — the approved
+plan drives an autonomous execution run that edits the code and **commits it locally in an
+isolated worktree, without pushing**.
 
 ![Squadron — an agent's proposed plan with the Approve & Dispatch gate](docs/agents.png)
+
+The result lands in **Ready to Review** as local changes. You open it, read the full diff
+of what the agent did, and only then **⬆ Push & Open PR** (or discard). So the flow is
+**plan → approve → review the local diff → push** — you review before anything leaves your
+machine.
+
+![Squadron — an agent's local changes staged for review before push](docs/changes.png)
 
 This front-loads the one part where you add the most value — direction and scope — and
 keeps execution (where agents are reliable) autonomous. During execution, an agent can
@@ -45,8 +52,9 @@ whole review to GitHub with one click.
 ## What it does
 
 - **Manage the backlog** — open issues across every repo, in one view
-- **Plan → approve → PR** — scope an issue interactively, approve, and an autonomous
-  agent implements it in an isolated git worktree and opens a pull request
+- **Plan → approve → review → PR** — scope an issue interactively, approve, and an
+  autonomous agent implements it locally in an isolated worktree; you review the diff in
+  **Ready to Review** and push to open the PR when it's right
 - **Review PRs inline** — click a PR to see the diff in-app; **🤖 AI Review** renders the
   agent's findings as inline comment cards anchored to the exact lines, then post to GitHub
 - **Watch agents live** — streamed reads / edits / commands, per agent, in parallel,
@@ -107,7 +115,8 @@ Open **http://localhost:5173**. To preview with demo data (no real repos touched
 | 5 | Plan first — interactive read-only plan → Approve & Dispatch → execute | ✅ |
 | 6 | PR review — read-only AI review of a diff → approve → post comment | ✅ |
 | 7 | In-app diff viewer + inline AI review findings | ✅ |
-| 8 | Parallel agents panel + run history | ⏳ |
+| 8 | Review-before-push — agent commits locally → review diff → push to PR | ✅ |
+| 9 | Parallel agents panel + run history | ⏳ |
 
 ## License
 

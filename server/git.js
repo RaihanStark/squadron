@@ -70,6 +70,15 @@ async function defaultBranch(mirror) {
   }
 }
 
+// The diff of a task's committed local changes vs. its base branch — what the
+// agent produced, for review before pushing.
+export async function taskDiff(taskId, base) {
+  const wt = worktreePath(taskId)
+  const b = base || 'main'
+  const { stdout } = await git(['diff', `origin/${b}...HEAD`], wt)
+  return stdout
+}
+
 // True if the agent actually changed anything.
 export async function hasChanges(wt) {
   const { stdout } = await git(['status', '--porcelain'], wt)

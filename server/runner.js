@@ -194,38 +194,61 @@ export async function approve(taskId) {
   return true
 }
 
+// After execution: commit the agent's work LOCALLY (no push, no PR) and stage it
+// in "Ready to Review". The operator reviews the diff, then pushes explicitly.
 async function finalize(ctx, res) {
-  const { id, owner, repo, wt, branch, base, issue } = ctx
+  const { id, owner, repo, wt, issue } = ctx
   if (ctx.ac?.signal.aborted) {
     await updateTask(id, { status: 'cancelled' })
     await git.removeWorktree(owner, repo, id)
     sessions.delete(id)
     return
   }
-  const summary = res.summary
-  addEvent(id, { kind: 'status', text: 'Committing changes…' })
-  await updateTask(id, { status: 'committing', summary, costUsd: res.costUsd })
+  addEvent(id, { kind: 'status', text: 'Committing changes locally…' })
+  await updateTask(id, { status: 'committing', summary: res.summary, costUsd: res.costUsd })
   const committed = await git.commitAll(wt, `${issue.title}\n\nResolves #${issue.number}`)
   if (!committed) {
-    addEvent(id, { kind: 'status', text: 'No file changes produced — nothing to push.' })
+    addEvent(id, { kind: 'status', text: 'No file changes produced.' })
     await updateTask(id, { status: 'no_changes' })
     await git.removeWorktree(owner, repo, id)
     sessions.delete(id)
     return
   }
-  addEvent(id, { kind: 'status', text: 'Pushing branch to origin…' })
-  await updateTask(id, { status: 'pushing' })
-  await git.pushBranch(wt, branch)
+  await updateTask(id, { status: 'changes_ready' })
+  addEvent(id, { kind: 'result', text: 'Changes ready for review (local — not pushed). Review the diff, then push to open a PR.', ok: true })
+  sessions.delete(id) // keep the worktree on disk for the diff + later push
+}
 
-  addEvent(id, { kind: 'status', text: 'Opening pull request…' })
-  await updateTask(id, { status: 'opening_pr' })
-  const prUrl = await gh.createPr(owner, repo, {
-    head: branch, base, title: issue.title, body: prBody(issue, summary, ctx.plan),
-  })
-  await updateTask(id, { status: 'pr_open', prUrl })
-  addEvent(id, { kind: 'result', text: `Pull request opened → ${prUrl}`, ok: true })
-  await git.removeWorktree(owner, repo, id)
-  sessions.delete(id)
+// Operator approved the local changes → push the branch and open the PR.
+export async function pushTask(taskId) {
+  const task = await getTask(taskId)
+  if (!task || task.status !== 'changes_ready' || !task.branch) return false
+  if (!(await git.worktreeExists(taskId))) {
+    addEvent(taskId, { kind: 'error', text: 'Worktree no longer exists — re-plan this issue.' })
+    await updateTask(taskId, { status: 'interrupted' })
+    return false
+  }
+  const { owner, repo, branch, base, issueNumber } = task
+  try {
+    addEvent(taskId, { kind: 'status', text: 'Pushing branch to origin…' })
+    await updateTask(taskId, { status: 'pushing' })
+    await git.pushBranch(git.worktreePathFor(taskId), branch)
+
+    addEvent(taskId, { kind: 'status', text: 'Opening pull request…' })
+    await updateTask(taskId, { status: 'opening_pr' })
+    const issue = await gh.getIssue(owner, repo, issueNumber)
+    const prUrl = await gh.createPr(owner, repo, {
+      head: branch, base, title: issue.title, body: prBody(issue, task.summary, task.plan),
+    })
+    await updateTask(taskId, { status: 'pr_open', prUrl })
+    addEvent(taskId, { kind: 'result', text: `Pull request opened → ${prUrl}`, ok: true })
+    await git.removeWorktree(owner, repo, taskId)
+    return true
+  } catch (err) {
+    addEvent(taskId, { kind: 'error', text: err.message })
+    await updateTask(taskId, { status: 'error', error: err.message })
+    return false
+  }
 }
 
 // --- Review flow ---

@@ -187,7 +187,7 @@ body {
 }
 .status-running, .status-preparing, .status-queued, .status-planning, .status-committing,
 .status-pushing, .status-opening_pr, .status-reviewing, .status-posting { color: var(--accent); border-color: var(--accent-dim); }
-.status-waiting, .status-planned, .status-reviewed { color: #1a1200; background: var(--accent); border-color: var(--accent); font-weight: 600; }
+.status-waiting, .status-planned, .status-reviewed, .status-changes_ready { color: #1a1200; background: var(--accent); border-color: var(--accent); font-weight: 600; }
 .status-pr_open, .status-review_posted { color: var(--green); border-color: #1f6f33; }
 .status-error, .status-interrupted { color: var(--red); border-color: #6e2420; }
 .status-cancelled, .status-no_changes { color: var(--muted); }
