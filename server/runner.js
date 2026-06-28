@@ -6,6 +6,7 @@ import * as questions from './questions.js'
 import { openSession, runExecution, describeTool } from './agent.js'
 import { updateTask, addEvent, getTask } from './tasks.js'
 import * as preview from './preview.js'
+import * as deps from './deps.js'
 
 const sessions = new Map() // taskId -> ctx
 
@@ -95,6 +96,11 @@ export async function startPlan(task, { defaultBranch } = {}) {
     addEvent(id, { kind: 'status', text: 'Preparing isolated worktree…' })
     const { path: wt, branch, base } = await git.createWorktree(owner, repo, id, defaultBranch)
     await updateTask(id, { branch, base, status: 'planning' })
+
+    // Install deps in the background so the planner has working build/test tooling
+    // (a fresh worktree is source-only). Non-blocking: plan start isn't delayed, and
+    // by approval time the worktree is usually warm. Idempotent — execution re-checks.
+    deps.ensureDeps(wt, (l) => addEvent(id, { kind: 'status', text: l })).catch(() => {})
 
     const tree = await git.trackedFiles(wt).catch(() => ({ total: 0, shown: 0, list: '(unavailable)' }))
     const ctx = { id, owner, repo, issue, wt, branch, base, model, phase: 'planning', lastText: '', plan: '' }
@@ -248,6 +254,12 @@ export async function approve(taskId) {
   // Run execution in the background; the HTTP request returns immediately.
   ;(async () => {
     try {
+      // Make sure the worktree has its deps before the agent builds/tests.
+      // Idempotent: instant if the planning-phase install already ran, and this
+      // also covers the post-restart path where that install never happened.
+      addEvent(taskId, { kind: 'status', text: 'Installing dependencies…' })
+      await deps.ensureDeps(ctx.wt, (l) => addEvent(taskId, { kind: 'status', text: l }))
+
       // Prefer continuing the warm planning session — the agent already read the
       // repo while planning, so we just flip it to autonomous and keep going.
       // Fall back to resuming (or, last resort, cold-starting) a fresh run when
