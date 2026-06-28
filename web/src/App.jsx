@@ -77,7 +77,7 @@ export default function App() {
   const waitingCount = taskList.filter((t) => t.status === 'waiting').length
   const activeRepo = repos.find((r) => r.nameWithOwner === active)
 
-  async function dispatch(repoObj, issue) {
+  async function dispatch(repoObj, issue, model) {
     const [owner, repo] = repoObj.nameWithOwner.split('/')
     try {
       const task = await api(`/api/repos/${owner}/${repo}/dispatch`, {
@@ -87,6 +87,7 @@ export default function App() {
           issueNumber: issue.number,
           issueTitle: issue.title,
           defaultBranch: repoObj.defaultBranchRef?.name,
+          model,
         }),
       })
       setTasks((prev) => ({ ...prev, [task.id]: { ...task, events: [] } }))
@@ -180,7 +181,7 @@ function RepoView({ repo, tab, setTab, onDispatch, tasks }) {
 
       <div className="list">
         {tab === 'backlog' && (
-          <IssueList issues={issues} taskByIssue={taskByIssue} onDispatch={(it) => onDispatch(repo, it)} />
+          <IssueList issues={issues} taskByIssue={taskByIssue} onDispatch={(it, model) => onDispatch(repo, it, model)} />
         )}
         {tab === 'prs' && <PullList pulls={pulls} />}
       </div>
@@ -191,28 +192,43 @@ function RepoView({ repo, tab, setTab, onDispatch, tasks }) {
 function IssueList({ issues, taskByIssue, onDispatch }) {
   if (issues === null) return <div className="muted pad">Loading missions…</div>
   if (!issues.length) return <div className="muted pad">No open issues. Clear skies. ✦</div>
-  return issues.map((it) => {
-    const task = taskByIssue[it.number]
-    const busy = task && ['queued', 'preparing', 'running', 'committing', 'pushing', 'opening_pr'].includes(task.status)
-    return (
-      <div key={it.number} className="card">
-        <div className="card-main">
-          <a className="num" href={it.url} target="_blank" rel="noreferrer">#{it.number}</a>
-          <span className="title">{it.title}</span>
-        </div>
-        <div className="card-meta">
-          {it.labels?.map((l) => (
-            <span key={l.name} className="label" style={{ '--c': `#${l.color}` }}>{l.name}</span>
-          ))}
-          <span className="muted">{it.comments} 💬 · {timeAgo(it.updatedAt)}</span>
-          {task && <StatusBadge status={task.status} />}
-          <button className="dispatch" disabled={busy} onClick={() => onDispatch(it)}>
-            {busy ? '… working' : '⚡ Dispatch'}
-          </button>
-        </div>
+  return issues.map((it) => (
+    <IssueRow key={it.number} issue={it} task={taskByIssue[it.number]} onDispatch={onDispatch} />
+  ))
+}
+
+function IssueRow({ issue: it, task, onDispatch }) {
+  const [model, setModel] = useState('opus')
+  const busy = task && ACTIVE.has(task.status)
+  return (
+    <div className="card">
+      <div className="card-main">
+        <a className="num" href={it.url} target="_blank" rel="noreferrer">#{it.number}</a>
+        <span className="title">{it.title}</span>
       </div>
-    )
-  })
+      <div className="card-meta">
+        {it.labels?.map((l) => (
+          <span key={l.name} className="label" style={{ '--c': `#${l.color}` }}>{l.name}</span>
+        ))}
+        <span className="muted">{it.comments} 💬 · {timeAgo(it.updatedAt)}</span>
+        {task && <StatusBadge status={task.status} />}
+        <select
+          className="model-select"
+          value={model}
+          disabled={busy}
+          onChange={(e) => setModel(e.target.value)}
+          title="Model for this dispatch"
+        >
+          <option value="opus">Opus</option>
+          <option value="sonnet">Sonnet</option>
+          <option value="haiku">Haiku</option>
+        </select>
+        <button className="dispatch" disabled={busy} onClick={() => onDispatch(it, model)}>
+          {busy ? '… working' : '⚡ Dispatch'}
+        </button>
+      </div>
+    </div>
+  )
 }
 
 function PullList({ pulls }) {
@@ -305,6 +321,7 @@ function AgentDetail({ task }) {
         </div>
         <div className="agent-actions">
           <StatusBadge status={task.status} />
+          {task.model && <span className="badge model-badge">{task.model}</span>}
           {task.branch && <span className="badge">{task.branch}</span>}
           {busy && <button className="cancel" onClick={cancel}>Cancel</button>}
           {task.prUrl && <a className="dispatch" href={task.prUrl} target="_blank" rel="noreferrer">Open PR ↗</a>}

@@ -93,6 +93,13 @@ body {
 }
 .dispatch:disabled { background: var(--panel-2); color: var(--muted); cursor: not-allowed; }
 
+.model-select {
+  background: var(--panel-2); color: var(--text); border: 1px solid var(--border);
+  border-radius: 6px; padding: 4px 6px; font-size: 12px; cursor: pointer;
+}
+.model-select:disabled { color: var(--muted); cursor: not-allowed; }
+.model-badge { text-transform: capitalize; color: #79c0ff; border: 1px solid var(--border); }
+
 .muted { color: var(--muted); font-size: 12px; }
 .pad { padding: 16px; }
 .empty, .error { padding: 24px; color: var(--muted); }

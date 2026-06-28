@@ -39,7 +39,7 @@ export const tasks = [
   {
     id: 'twait', owner: 'acme', repo: 'financy', issueNumber: 3,
     issueTitle: 'Add password encryption for the local vault',
-    status: 'waiting', branch: 'squadron/twait', base: 'main', prUrl: null,
+    status: 'waiting', branch: 'squadron/twait', base: 'main', prUrl: null, model: 'opus',
     costUsd: null, createdAt: now - 4 * 60000,
     question: 'The vault is currently plaintext JSON. Should I derive the key from a user password (Argon2id) and prompt on unlock, or store the key in the OS keyring for passwordless unlock? They trade off security vs. convenience.',
     events: [
@@ -54,7 +54,7 @@ export const tasks = [
   {
     id: 'trun', owner: 'acme', repo: 'timetracky', issueNumber: 14,
     issueTitle: 'Export tracked hours to CSV',
-    status: 'running', branch: 'squadron/trun', base: 'main', prUrl: null,
+    status: 'running', branch: 'squadron/trun', base: 'main', prUrl: null, model: 'sonnet',
     costUsd: null, createdAt: now - 2 * 60000,
     events: [
       { kind: 'status', text: 'agent online · claude-sonnet-4-6' },
@@ -68,7 +68,7 @@ export const tasks = [
   {
     id: 'tdone', owner: 'acme', repo: 'financy', issueNumber: 22,
     issueTitle: 'Release to Flathub',
-    status: 'pr_open', branch: 'squadron/tdone', base: 'main',
+    status: 'pr_open', branch: 'squadron/tdone', base: 'main', model: 'opus',
     prUrl: 'https://github.com/acme/financy/pull/40',
     summary: 'Added a Flatpak manifest and a GitHub Actions job that builds and publishes to Flathub on tagged releases. Documented the release steps in CONTRIBUTING.md.',
     costUsd: 0.214, createdAt: now - 18 * 60000,
