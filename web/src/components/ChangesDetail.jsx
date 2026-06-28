@@ -16,6 +16,7 @@ export default function ChangesDetail({ task, onBack }) {
   const [cmdDirty, setCmdDirty] = useState(false)
   const [chatText, setChatText] = useState('')
   const [sending, setSending] = useState(false)
+  const [confirmingDiscard, setConfirmingDiscard] = useState(false)
   const [chatW, setChatW] = usePref('chatWidth', 400)
   const [dockOpen, setDockOpen] = usePref('dockOpen', false)
   const logRef = useRef(null)
@@ -23,6 +24,7 @@ export default function ChangesDetail({ task, onBack }) {
 
   // (Re)load the diff on open and whenever a revision finishes.
   useEffect(() => {
+    setConfirmingDiscard(false)
     if (!task || ['pr_open', 'cancelled'].includes(task.status)) return
     api(`/api/tasks/${task.id}/diff`).then((r) => setFiles(parseDiff(r.diff || ''))).catch((e) => setError(e.message))
   }, [task?.id, task?.status])
@@ -61,7 +63,6 @@ export default function ChangesDetail({ task, onBack }) {
     catch (e) { alert('Push failed: ' + e.message) } finally { setPushing(false) }
   }
   async function discard() {
-    if (!confirm('Discard these local changes? This removes the worktree.')) return
     try { await api(`/api/tasks/${task.id}/cancel`, { method: 'POST' }); onBack() } catch (e) { alert(e.message) }
   }
   async function startPreview() {
@@ -92,7 +93,15 @@ export default function ChangesDetail({ task, onBack }) {
         <div className="agent-actions">
           <StatusBadge status={task.status} />
           {task.branch && <span className="badge">{task.branch}</span>}
-          {ready && <button className="cancel" onClick={discard}>Discard</button>}
+          {ready && (confirmingDiscard ? (
+            <>
+              <span className="confirm-text">Discard changes &amp; worktree?</span>
+              <button className="cancel" onClick={discard}>Confirm</button>
+              <button className="link-btn" onClick={() => setConfirmingDiscard(false)}>Cancel</button>
+            </>
+          ) : (
+            <button className="cancel" onClick={() => setConfirmingDiscard(true)}>Discard</button>
+          ))}
           {ready && <button className="approve-btn" disabled={pushing} onClick={push}>{pushing ? 'Pushing…' : '⬆ Push & Open PR'}</button>}
           {task.prUrl && <a className="dispatch" href={task.prUrl} target="_blank" rel="noreferrer">Open PR ↗</a>}
         </div>
