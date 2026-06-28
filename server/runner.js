@@ -120,6 +120,10 @@ export function sendMessage(taskId, text) {
 // --- Execution phase ---
 
 export async function approve(taskId) {
+  const task0 = await getTask(taskId)
+  // Review tasks: "approve" means post the review to the PR.
+  if ((sessions.get(taskId)?.kind || task0?.kind) === 'review') return approveReview(taskId, task0)
+
   let ctx = sessions.get(taskId)
 
   // If the planning session was lost (e.g. the server restarted), rebuild just
@@ -217,6 +221,84 @@ async function finalize(ctx, res) {
   addEvent(id, { kind: 'result', text: `Pull request opened → ${prUrl}`, ok: true })
   await git.removeWorktree(owner, repo, id)
   sessions.delete(id)
+}
+
+// --- Review flow ---
+
+function reviewPrompt(owner, repo, pr, diff) {
+  return `You are reviewing pull request #${pr.number} ("${pr.title}") in ${owner}/${repo}. The PR's head is checked out in your current working directory, so you can read the full code for context. Stay strictly inside this directory.
+
+Review the diff below for correctness bugs, security issues, and clear quality problems. Be specific, concise, and fair — skip nitpicks unless they matter. Do NOT modify any files; this is review-only.
+
+Output your review as GitHub-flavored markdown:
+- A one or two sentence overall summary.
+- A "## Findings" section: one bullet per issue as **\`path:line\`** — _severity_ (bug / security / quality) — the problem and a concrete suggested fix. If you find no real issues, say so plainly.
+
+--- DIFF ---
+${diff}
+--- END DIFF ---`
+}
+
+export async function startReview(task) {
+  const { id, owner, repo, issueNumber: prNumber, model } = task
+  try {
+    await updateTask(id, { status: 'preparing' })
+    addEvent(id, { kind: 'status', text: `Fetching PR #${prNumber}…` })
+    const pr = await gh.getPr(owner, repo, prNumber)
+    let diff = await gh.getPrDiff(owner, repo, prNumber)
+    const MAX = 60000
+    if (diff.length > MAX) {
+      diff = diff.slice(0, MAX) + '\n…[diff truncated]…'
+      addEvent(id, { kind: 'status', text: 'Large diff truncated for review.' })
+    }
+
+    addEvent(id, { kind: 'status', text: 'Checking out PR head in a worktree…' })
+    const { path: wt } = await git.createPrWorktree(owner, repo, id, prNumber)
+    await updateTask(id, { status: 'reviewing' })
+    addEvent(id, { kind: 'status', text: `Reviewing #${prNumber}…` })
+
+    const ac = new AbortController()
+    sessions.set(id, { id, owner, repo, kind: 'review', prNumber, wt, ac })
+
+    const res = await runExecution({
+      prompt: reviewPrompt(owner, repo, pr, diff),
+      cwd: wt, model, signal: ac.signal,
+      onEvent: (e) => addEvent(id, e),
+    })
+
+    await git.removeWorktree(owner, repo, id) // review captured; no further fs needed
+    if (ac.signal.aborted) {
+      await updateTask(id, { status: 'cancelled' })
+      sessions.delete(id)
+      return
+    }
+    await updateTask(id, { status: 'reviewed', review: res.summary, costUsd: res.costUsd })
+    addEvent(id, { kind: 'status', text: 'Review ready — approve to post it to the PR.' })
+  } catch (err) {
+    console.error(`[review ${id}]`, err)
+    addEvent(id, { kind: 'error', text: err.message })
+    await updateTask(id, { status: 'error', error: err.message })
+    await git.removeWorktree(owner, repo, id).catch(() => {})
+    sessions.delete(id)
+  }
+}
+
+async function approveReview(taskId, task) {
+  if (!task || task.status !== 'reviewed' || !task.review) return false
+  const { owner, repo, issueNumber: prNumber, review } = task
+  try {
+    addEvent(taskId, { kind: 'status', text: 'Posting review to the PR…' })
+    await updateTask(taskId, { status: 'posting' })
+    const url = await gh.postPrComment(owner, repo, prNumber, `${review}\n\n---\n🤖 Reviewed by Squadron`)
+    await updateTask(taskId, { status: 'review_posted', prUrl: url })
+    addEvent(taskId, { kind: 'result', text: `Review posted → ${url}`, ok: true })
+    sessions.delete(taskId)
+    return true
+  } catch (err) {
+    addEvent(taskId, { kind: 'error', text: err.message })
+    await updateTask(taskId, { status: 'error', error: err.message })
+    return false
+  }
 }
 
 export function cancel(taskId) {

@@ -22,12 +22,20 @@ function timeAgo(iso) {
   return 'just now'
 }
 
-const ACTIVE = new Set(['queued', 'preparing', 'planning', 'planned', 'running', 'waiting', 'committing', 'pushing', 'opening_pr'])
-const NEEDS_YOU = new Set(['planned', 'waiting'])
+const ACTIVE = new Set(['queued', 'preparing', 'planning', 'planned', 'running', 'waiting', 'committing', 'pushing', 'opening_pr', 'reviewing', 'reviewed', 'posting'])
+const NEEDS_YOU = new Set(['planned', 'waiting', 'reviewed'])
+// Statuses where the agent is actively chewing (so the UI shows a live "working"
+// indicator) — excludes the awaiting-you states (planned/reviewed/waiting).
+const WORKING_LABEL = {
+  queued: 'queued…', preparing: 'preparing…', planning: 'planner thinking…',
+  running: 'agent working…', reviewing: 'reviewing the diff…', committing: 'committing…',
+  pushing: 'pushing…', opening_pr: 'opening PR…', posting: 'posting…',
+}
 const STATUS_LABEL = {
   queued: 'queued', preparing: 'preparing', planning: 'planning', planned: 'plan ready',
   running: 'running', waiting: 'needs you', committing: 'committing', pushing: 'pushing',
   opening_pr: 'opening PR', pr_open: 'PR open', no_changes: 'no changes',
+  reviewing: 'reviewing', reviewed: 'review ready', posting: 'posting', review_posted: 'review posted',
   cancelled: 'cancelled', error: 'error', interrupted: 'interrupted',
 }
 
@@ -115,6 +123,22 @@ export default function App() {
     }
   }
 
+  async function review(repoObj, pr, model) {
+    const [owner, repo] = repoObj.nameWithOwner.split('/')
+    try {
+      const task = await api(`/api/repos/${owner}/${repo}/review`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ prNumber: pr.number, prTitle: pr.title, model }),
+      })
+      setTasks((prev) => ({ ...prev, [task.id]: { ...(prev[task.id] || {}), ...task, events: prev[task.id]?.events || [] } }))
+      setSelectedTask(task.id)
+      setView('agents')
+    } catch (e) {
+      alert('Review failed: ' + e.message)
+    }
+  }
+
   function openTask(taskId) {
     setSelectedTask(taskId)
     setView('agents')
@@ -158,7 +182,7 @@ export default function App() {
           {view === 'agents' ? (
             <AgentsPanel tasks={taskList} selected={selectedTask} setSelected={setSelectedTask} />
           ) : activeRepo ? (
-            <RepoView key={active} repo={activeRepo} tab={tab} setTab={setTab} onDispatch={dispatch} onOpenTask={openTask} tasks={taskList} />
+            <RepoView key={active} repo={activeRepo} tab={tab} setTab={setTab} onDispatch={dispatch} onReview={review} onOpenTask={openTask} tasks={taskList} />
           ) : (
             <div className="empty">Select a repo to begin.</div>
           )}
@@ -168,7 +192,7 @@ export default function App() {
   )
 }
 
-function RepoView({ repo, tab, setTab, onDispatch, onOpenTask, tasks }) {
+function RepoView({ repo, tab, setTab, onDispatch, onReview, onOpenTask, tasks }) {
   const [owner, name] = repo.nameWithOwner.split('/')
   const [issues, setIssues] = useState(null)
   const [pulls, setPulls] = useState(null)
@@ -180,10 +204,13 @@ function RepoView({ repo, tab, setTab, onDispatch, onOpenTask, tasks }) {
     api(`/api/repos/${owner}/${name}/pulls`).then(setPulls).catch((e) => setError(e.message))
   }, [repo.nameWithOwner])
 
-  // Map issueNumber -> latest task, so a dispatched issue shows live status.
+  // Map number -> latest task per kind, so a dispatched issue / PR shows live status.
   const taskByIssue = {}
+  const taskByPr = {}
   for (const t of tasks) {
-    if (`${t.owner}/${t.repo}` === repo.nameWithOwner) taskByIssue[t.issueNumber] = t
+    if (`${t.owner}/${t.repo}` !== repo.nameWithOwner) continue
+    if ((t.kind || 'plan') === 'review') taskByPr[t.issueNumber] = t
+    else taskByIssue[t.issueNumber] = t
   }
 
   return (
@@ -206,7 +233,9 @@ function RepoView({ repo, tab, setTab, onDispatch, onOpenTask, tasks }) {
         {tab === 'backlog' && (
           <IssueList issues={issues} taskByIssue={taskByIssue} onOpenTask={onOpenTask} onDispatch={(it, model) => onDispatch(repo, it, model)} />
         )}
-        {tab === 'prs' && <PullList pulls={pulls} />}
+        {tab === 'prs' && (
+          <PullList pulls={pulls} taskByPr={taskByPr} onOpenTask={onOpenTask} onReview={(pr, model) => onReview(repo, pr, model)} />
+        )}
       </div>
     </>
   )
@@ -265,13 +294,22 @@ function IssueRow({ issue: it, task, onDispatch, onOpenTask }) {
   )
 }
 
-function PullList({ pulls }) {
+function PullList({ pulls, taskByPr, onOpenTask, onReview }) {
   if (pulls === null) return <div className="muted pad">Loading sorties…</div>
   if (!pulls.length) return <div className="muted pad">No open PRs.</div>
   return pulls.map((pr) => (
-    <a key={pr.number} className="card" href={pr.url} target="_blank" rel="noreferrer">
+    <PrRow key={pr.number} pr={pr} task={taskByPr[pr.number]} onOpenTask={onOpenTask} onReview={onReview} />
+  ))
+}
+
+function PrRow({ pr, task, onOpenTask, onReview }) {
+  const [model, setModel] = useState('opus')
+  const inflight = task && ACTIVE.has(task.status)
+  const verb = task?.status === 'reviewing' ? 'reviewing…' : task?.status === 'reviewed' ? 'review ready' : 'in progress'
+  return (
+    <div className="card">
       <div className="card-main">
-        <span className="num">#{pr.number}</span>
+        <a className="num" href={pr.url} target="_blank" rel="noreferrer">#{pr.number}</a>
         <span className="title">{pr.title}</span>
         {pr.isDraft && <span className="badge">draft</span>}
       </div>
@@ -280,10 +318,22 @@ function PullList({ pulls }) {
         <span className="diff del">−{pr.deletions}</span>
         {pr.reviewDecision && <span className="badge">{pr.reviewDecision.toLowerCase().replace('_', ' ')}</span>}
         <span className="muted">{timeAgo(pr.updatedAt)}</span>
-        <button className="dispatch" disabled title="Coming in slice 3">🔍 Review</button>
+        {task && <StatusBadge status={task.status} />}
+        {inflight ? (
+          <button className="dispatch view-btn" onClick={() => onOpenTask(task.id)}>👁 View {verb}</button>
+        ) : (
+          <>
+            <select className="model-select" value={model} onChange={(e) => setModel(e.target.value)} title="Model for this review">
+              <option value="opus">Opus</option>
+              <option value="sonnet">Sonnet</option>
+              <option value="haiku">Haiku</option>
+            </select>
+            <button className="dispatch" onClick={() => onReview(pr, model)}>🔍 Review</button>
+          </>
+        )}
       </div>
-    </a>
-  ))
+    </div>
+  )
 }
 
 function StatusBadge({ status }) {
@@ -323,9 +373,19 @@ function AgentDetail({ task }) {
   const [reply, setReply] = useState('')
   const [sending, setSending] = useState(false)
   const [approving, setApproving] = useState(false)
+  const [, tick] = useState(0) // re-render every second while working, to tick the timer
   useEffect(() => {
     if (logRef.current) logRef.current.scrollTop = logRef.current.scrollHeight
   }, [task.events?.length, task.status])
+
+  const workingLabel = WORKING_LABEL[task.status]
+  useEffect(() => {
+    if (!workingLabel) return
+    const i = setInterval(() => tick((n) => n + 1), 1000)
+    return () => clearInterval(i)
+  }, [workingLabel])
+  const lastTs = task.events?.length ? task.events[task.events.length - 1].ts : null
+  const idleSecs = workingLabel && lastTs ? Math.max(0, Math.floor((Date.now() - lastTs) / 1000)) : 0
 
   async function post(path, body) {
     return api(`/api/tasks/${task.id}/${path}`, {
@@ -337,6 +397,7 @@ function AgentDetail({ task }) {
   const waiting = task.status === 'waiting'     // execution paused on a question
   const planning = task.status === 'planning'   // planner is thinking
   const planned = task.status === 'planned'     // plan ready, awaiting you
+  const reviewed = task.status === 'reviewed'   // review ready, awaiting you
   const canChat = planning || planned || waiting
   const busy = ACTIVE.has(task.status)
 
@@ -392,8 +453,25 @@ function AgentDetail({ task }) {
               : <span className="log-status">▸ {e.text}</span>}
           </div>
         ))}
-        {!task.events?.length && <div className="muted">Waiting for the planner to report in…</div>}
+        {workingLabel && (
+          <div className="log-working">
+            <span className="dots"><span /><span /><span /></span>
+            {workingLabel}{idleSecs >= 3 ? ` · ${idleSecs}s` : ''}
+          </div>
+        )}
+        {!task.events?.length && !workingLabel && <div className="muted">Waiting for the agent to report in…</div>}
       </div>
+
+      {reviewed && (
+        <div className="ask">
+          <div className="approve-row">
+            <span className="muted">Review ready. Approve to post it as a comment on the PR.</span>
+            <button className="approve-btn" disabled={approving} onClick={approve}>
+              {approving ? 'Posting…' : '✅ Approve & Post'}
+            </button>
+          </div>
+        </div>
+      )}
 
       {canChat && (
         <div className={`ask ${waiting ? 'ask-waiting' : ''}`}>

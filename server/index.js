@@ -49,6 +49,19 @@ app.post('/api/repos/:owner/:repo/plan', handle(async (req) => {
   return task
 }))
 
+// Start a read-only review of a PR. Streams over /api/stream; the review then
+// waits for approval before posting.
+app.post('/api/repos/:owner/:repo/review', handle(async (req) => {
+  const { owner, repo } = req.params
+  const { prNumber, prTitle, model } = req.body
+  if (!prNumber) throw new Error('prNumber is required')
+  const existing = await findActiveByIssue(owner, repo, prNumber, 'review')
+  if (existing) return { ...existing, deduped: true }
+  const task = await createTask({ owner, repo, issueNumber: prNumber, issueTitle: prTitle, model, kind: 'review' })
+  runner.startReview(task).catch((e) => console.error('startReview crashed', e))
+  return task
+}))
+
 // Send a message into a live planning chat.
 app.post('/api/tasks/:id/message', handle(async (req) => {
   const text = (req.body?.text || '').trim()

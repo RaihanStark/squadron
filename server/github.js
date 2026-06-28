@@ -55,6 +55,25 @@ export function getIssue(owner, repo, number) {
   ])
 }
 
+// Full detail for a single PR (incl. head/base refs) — used to set up a review.
+export function getPr(owner, repo, number) {
+  return gh([
+    'pr', 'view', String(number),
+    '--repo', `${owner}/${repo}`,
+    '--json', 'number,title,body,headRefName,baseRefName,url,additions,deletions',
+  ])
+}
+
+// The unified diff for a PR.
+export function getPrDiff(owner, repo, number) {
+  return ghRaw(['pr', 'diff', String(number), '--repo', `${owner}/${repo}`])
+}
+
+// Post a comment on a PR. Returns the comment URL.
+export function postPrComment(owner, repo, number, body) {
+  return ghRaw(['pr', 'comment', String(number), '--repo', `${owner}/${repo}`, '--body', body])
+}
+
 // Open a PR for an already-pushed branch. Returns the PR URL.
 export function createPr(owner, repo, { head, base, title, body }) {
   return ghRaw([

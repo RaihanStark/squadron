@@ -17,6 +17,7 @@ bus.setMaxListeners(0)
 // its plan is captured, so it can still be approved after a restart.
 const NEEDS_SESSION = new Set([
   'queued', 'preparing', 'planning', 'running', 'waiting', 'committing', 'pushing', 'opening_pr',
+  'reviewing', 'posting',
 ])
 
 let loaded = false
@@ -74,25 +75,25 @@ const ACTIVE_STATUS = new Set([
   'committing', 'pushing', 'opening_pr',
 ])
 
-// The active task already working an issue, if any — used to dedupe so we
-// never spawn a second plan agent for the same issue.
-export async function findActiveByIssue(owner, repo, issueNumber) {
+// The active task already working an issue/PR of a given kind, if any — used to
+// dedupe so we never spawn a second agent for the same target.
+export async function findActiveByIssue(owner, repo, number, kind = 'plan') {
   await load()
   for (const t of tasks.values()) {
-    if (t.owner === owner && t.repo === repo && t.issueNumber == issueNumber && ACTIVE_STATUS.has(t.status)) {
+    if (t.owner === owner && t.repo === repo && t.issueNumber == number && (t.kind || 'plan') === kind && ACTIVE_STATUS.has(t.status)) {
       return t
     }
   }
   return null
 }
 
-export async function createTask({ owner, repo, issueNumber, issueTitle, model }) {
+export async function createTask({ owner, repo, issueNumber, issueTitle, model, kind = 'plan' }) {
   await load()
   const id = randomUUID().slice(0, 8)
   const task = {
-    id, owner, repo, issueNumber, issueTitle, model: model || 'opus',
+    id, owner, repo, kind, issueNumber, issueTitle, model: model || 'opus',
     status: 'queued', branch: null, base: null, prUrl: null,
-    plan: null, question: null, summary: null, error: null, costUsd: null,
+    plan: null, review: null, question: null, summary: null, error: null, costUsd: null,
     createdAt: Date.now(), events: [],
   }
   tasks.set(id, task)

@@ -51,6 +51,16 @@ export async function createWorktree(owner, repo, taskId, baseBranch) {
   return { path: wt, branch, base, mirror }
 }
 
+// Detached worktree checked out at a PR's head, for read-only review context.
+export async function createPrWorktree(owner, repo, taskId, prNumber) {
+  const mirror = await ensureMirror(owner, repo)
+  await mkdir(WORKTREES_DIR, { recursive: true })
+  const wt = worktreePath(taskId)
+  await git(['fetch', 'origin', `pull/${prNumber}/head`], mirror)
+  await git(['worktree', 'add', '--detach', wt, 'FETCH_HEAD'], mirror)
+  return { path: wt }
+}
+
 async function defaultBranch(mirror) {
   try {
     const { stdout } = await git(['symbolic-ref', 'refs/remotes/origin/HEAD'], mirror)

@@ -131,9 +131,9 @@ body {
   background: var(--panel-2); color: var(--muted); border: 1px solid var(--border);
 }
 .status-running, .status-preparing, .status-queued, .status-planning, .status-committing,
-.status-pushing, .status-opening_pr { color: var(--accent); border-color: var(--accent-dim); }
-.status-waiting, .status-planned { color: #1a1200; background: var(--accent); border-color: var(--accent); font-weight: 600; }
-.status-pr_open { color: var(--green); border-color: #1f6f33; }
+.status-pushing, .status-opening_pr, .status-reviewing, .status-posting { color: var(--accent); border-color: var(--accent-dim); }
+.status-waiting, .status-planned, .status-reviewed { color: #1a1200; background: var(--accent); border-color: var(--accent); font-weight: 600; }
+.status-pr_open, .status-review_posted { color: var(--green); border-color: #1f6f33; }
 .status-error, .status-interrupted { color: var(--red); border-color: #6e2420; }
 .status-cancelled, .status-no_changes { color: var(--muted); }
 
@@ -151,6 +151,19 @@ body {
 
 .log-question { color: var(--accent); font-weight: 600; }
 .log-answer { color: #79c0ff; }
+
+.log-working {
+  display: flex; align-items: center; gap: 8px; margin-top: 6px;
+  color: var(--accent); font-style: italic;
+}
+.dots { display: inline-flex; gap: 3px; }
+.dots span {
+  width: 5px; height: 5px; border-radius: 50%; background: var(--accent);
+  animation: blink 1.2s infinite ease-in-out both;
+}
+.dots span:nth-child(1) { animation-delay: -0.24s; }
+.dots span:nth-child(2) { animation-delay: -0.12s; }
+@keyframes blink { 0%, 80%, 100% { opacity: 0.2; transform: scale(0.8); } 40% { opacity: 1; transform: scale(1); } }
 
 .ask {
   border-top: 1px solid var(--accent-dim); background: rgba(240, 165, 0, 0.06);

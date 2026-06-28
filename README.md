@@ -38,7 +38,10 @@ resuming where it left off once you answer.
 - **Manage the backlog** — open issues across every repo, in one view
 - **Plan → approve → PR** — scope an issue interactively, approve, and an autonomous
   agent implements it in an isolated git worktree and opens a pull request
-- **Watch agents live** — streamed reads / edits / commands, per agent, in parallel
+- **Review PRs** — a read-only agent reviews the diff (with the PR checked out for
+  context); approve to post it as a PR comment
+- **Watch agents live** — streamed reads / edits / commands, per agent, in parallel,
+  with a live "working…" indicator so a quiet think never looks like a hang
 - **Stay in the loop** — refine the plan in chat; agents call `ask_user` mid-execution
   when they need a decision
 - **Pick the firepower** — Opus / Sonnet / Haiku per task
@@ -93,7 +96,7 @@ Open **http://localhost:5173**. To preview with demo data (no real repos touched
 | 3 | Interactive `ask_user` — pause for clarification, resume on answer | ✅ |
 | 4 | Per-task model picker (Opus / Sonnet / Haiku) | ✅ |
 | 5 | Plan first — interactive read-only plan → Approve & Dispatch → execute | ✅ |
-| 6 | PR review — AI review over a diff, post comments | ⏳ |
+| 6 | PR review — read-only AI review of a diff → approve → post comment | ✅ |
 | 7 | Parallel agents panel + run history | ⏳ |
 
 ## License
