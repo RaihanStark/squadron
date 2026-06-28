@@ -105,6 +105,24 @@ export async function commitAll(wt, message) {
   return true
 }
 
+// Stage everything (incl. untracked) without committing.
+export async function stageAll(wt) {
+  await git(['add', '-A'], wt)
+}
+
+// The diff of everything currently staged — used to name a change before commit.
+export async function stagedDiff(wt) {
+  const { stdout } = await git(['diff', '--cached'], wt)
+  return stdout
+}
+
+// Commit the already-staged changes. Returns false if there's nothing staged.
+export async function commitStaged(wt, message) {
+  if (!(await stagedDiff(wt)).trim()) return false
+  await git(['commit', '-m', message], wt)
+  return true
+}
+
 // Push the task branch to origin.
 export async function pushBranch(wt, branch) {
   await git(['push', '-u', 'origin', branch], wt)

@@ -3,7 +3,7 @@
 import * as git from './git.js'
 import * as gh from './github.js'
 import * as questions from './questions.js'
-import { openSession, runExecution, describeTool } from './agent.js'
+import { openSession, runExecution, describeTool, generateChangeName } from './agent.js'
 import { updateTask, addEvent, getTask } from './tasks.js'
 import * as preview from './preview.js'
 
@@ -302,19 +302,30 @@ export async function stageErrand(taskId) {
     addEvent(taskId, { kind: 'error', text: 'This errand session is no longer live — start a new quick task.' })
     return false
   }
-  const { owner, repo, wt } = ctx
+  const { owner, repo, wt, model } = ctx
   addEvent(taskId, { kind: 'status', text: 'Committing changes locally…' })
   await updateTask(taskId, { status: 'committing', summary: ctx.lastText || task.summary })
-  const committed = await git.commitAll(wt, ctx.instruction || task.issueTitle || 'Quick task')
-  try { ctx.handle?.close() } catch { /* already closed */ }
-  if (!committed) {
+
+  // Stage everything first so we can diff it and name the change by what it does.
+  await git.stageAll(wt)
+  const diff = await git.stagedDiff(wt)
+  if (!diff.trim()) {
+    try { ctx.handle?.close() } catch { /* already closed */ }
     addEvent(taskId, { kind: 'status', text: 'No file changes produced.' })
     await updateTask(taskId, { status: 'no_changes' })
     await git.removeWorktree(owner, repo, taskId)
     sessions.delete(taskId)
     return false
   }
-  await updateTask(taskId, { status: 'changes_ready', staged: true })
+
+  addEvent(taskId, { kind: 'status', text: 'Naming the change…' })
+  const named = await generateChangeName({ diff, instruction: ctx.instruction, model })
+  const title = named?.title || task.issueTitle || 'Quick task'
+  const message = named?.commit || ctx.instruction || title
+
+  await git.commitStaged(wt, message)
+  try { ctx.handle?.close() } catch { /* already closed */ }
+  await updateTask(taskId, { status: 'changes_ready', staged: true, issueTitle: title })
   addEvent(taskId, { kind: 'result', text: 'Changes ready for review (local — not pushed). Review the diff, then push to open a PR.', ok: true })
   sessions.delete(taskId) // keep the worktree on disk for the diff + later push
   return true
