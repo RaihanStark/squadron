@@ -4,7 +4,7 @@ import { parseDiff, filePath } from '../diff.js'
 import { ciState, ciChecks, CI_LABEL, CI_CHECK_SYMBOL } from '../ci.js'
 import DiffFile from './DiffFile.jsx'
 
-export default function PrDetail({ repo, pr, task, onReview, onBack }) {
+export default function PrDetail({ repo, pr, task, resolveTask, onReview, onResolve, onOpenChanges, onBack }) {
   const [owner, name] = repo.nameWithOwner.split('/')
   const [files, setFiles] = useState(null)
   const [detail, setDetail] = useState(null)
@@ -63,6 +63,11 @@ export default function PrDetail({ repo, pr, task, onReview, onBack }) {
     : mergeable !== 'MERGEABLE' ? 'PR is not mergeable'
     : `Merge this PR (${mergeMethod})`
 
+  const conflicting = mergeable === 'CONFLICTING'
+  const isFork = detail?.isCrossRepository
+  const resolving = resolveTask && ['preparing', 'running', 'committing', 'pushing'].includes(resolveTask.status)
+  const resolveReady = resolveTask && resolveTask.status === 'changes_ready'
+
   const reviewing = task && ['preparing', 'reviewing', 'posting'].includes(task.status)
   const reviewed = task && (task.status === 'reviewed' || task.status === 'review_posted')
   const findings = task?.findings || []
@@ -89,6 +94,12 @@ export default function PrDetail({ repo, pr, task, onReview, onBack }) {
           <button className="merge-btn" disabled={!canMerge || merging} onClick={merge} title={mergeReason}>
             {merging ? 'Merging…' : '⛙ Merge'}
           </button>
+          {conflicting && !isFork && (
+            resolving ? <span className="status status-reviewing">resolving…</span>
+            : resolveReady ? <button className="approve-btn" onClick={() => onOpenChanges(resolveTask.id)}>🔀 Review resolution</button>
+            : <button className="dispatch" onClick={() => onResolve(repo, pr, model)} title="Have AI merge the base branch in and resolve the conflicts">🤖 Resolve conflicts</button>
+          )}
+          {conflicting && isFork && <span className="status" title="Fork PRs can't be auto-resolved — no push access to the fork's branch">⚠ fork — resolve manually</span>}
           {reviewing && <span className="status status-reviewing">reviewing…</span>}
           {task?.status === 'review_posted' && <a className="badge" href={task.prUrl} target="_blank" rel="noreferrer">✓ posted ↗</a>}
           {task?.status === 'reviewed' && (

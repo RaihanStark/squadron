@@ -63,6 +63,54 @@ export async function createPrWorktree(owner, repo, taskId, prNumber) {
   return { path: wt }
 }
 
+// Worktree on the PR's head branch with the base branch merged in (left
+// uncommitted, conflicts and all). Used to drive AI conflict resolution: the
+// agent edits the conflicted files in place, then we commit the merge and push
+// it back to the PR's own branch. Returns { path, headRef, baseRef, conflicts }.
+export async function createMergeWorktree(owner, repo, taskId, headRef, baseRef) {
+  const mirror = await ensureMirror(owner, repo)
+  await mkdir(WORKTREES_DIR, { recursive: true })
+  const wt = worktreePath(taskId)
+  await git(['fetch', 'origin', headRef, baseRef], mirror)
+  await git(['worktree', 'add', '-b', `squadron-merge/${taskId}`, wt, `origin/${headRef}`], mirror)
+  // The merge is expected to conflict — swallow the non-zero exit and inspect
+  // the index afterwards rather than relying on the exit code.
+  await git(['merge', '--no-commit', '--no-ff', `origin/${baseRef}`], wt).catch(() => {})
+  const conflicts = await conflictedFiles(wt)
+  return { path: wt, headRef, baseRef, conflicts }
+}
+
+// Paths still unmerged in the index (both sides touched them) — the files the
+// agent must resolve.
+export async function conflictedFiles(wt) {
+  const { stdout } = await git(['diff', '--name-only', '--diff-filter=U'], wt)
+  return stdout.split('\n').filter(Boolean)
+}
+
+// True if any tracked file still contains conflict markers — a guard before we
+// commit the merge. `git diff --check` exits non-zero (and lists the lines)
+// when markers remain.
+export async function mergeHasConflictMarkers(wt) {
+  try {
+    await git(['diff', '--check'], wt)
+    return false
+  } catch {
+    return true
+  }
+}
+
+// Complete the in-progress merge commit once conflicts are resolved.
+export async function commitMerge(wt) {
+  await git(['add', '-A'], wt)
+  await git(['commit', '--no-edit'], wt)
+}
+
+// Push the resolved merge back to the PR's own head branch (updates the PR in
+// place — no new branch or PR).
+export async function pushHead(wt, headRef) {
+  await git(['push', 'origin', `HEAD:${headRef}`], wt)
+}
+
 async function defaultBranch(mirror) {
   try {
     const { stdout } = await git(['symbolic-ref', 'refs/remotes/origin/HEAD'], mirror)

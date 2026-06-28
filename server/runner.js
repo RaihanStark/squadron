@@ -445,6 +445,26 @@ export async function pushTask(taskId) {
     return false
   }
   const { owner, repo, branch, base, issueNumber } = task
+
+  // Resolve tasks push the completed merge back to the PR's own head branch and
+  // reuse the existing PR — no new branch or PR is opened.
+  if (task.kind === 'resolve') {
+    try {
+      addEvent(taskId, { kind: 'status', text: `Pushing resolution to ${task.headRef}…` })
+      await updateTask(taskId, { status: 'pushing' })
+      await git.pushHead(git.worktreePathFor(taskId), task.headRef)
+      await updateTask(taskId, { status: 'pr_open', prUrl: task.prUrl })
+      addEvent(taskId, { kind: 'result', text: `Resolution pushed → ${task.prUrl}`, ok: true })
+      preview.stop(taskId)
+      await git.removeWorktree(owner, repo, taskId)
+      return true
+    } catch (err) {
+      addEvent(taskId, { kind: 'error', text: err.message })
+      await updateTask(taskId, { status: 'error', error: err.message })
+      return false
+    }
+  }
+
   try {
     addEvent(taskId, { kind: 'status', text: 'Pushing branch to origin…' })
     await updateTask(taskId, { status: 'pushing' })
@@ -642,6 +662,102 @@ async function approveReview(taskId, task) {
     addEvent(taskId, { kind: 'error', text: err.message })
     await updateTask(taskId, { status: 'error', error: err.message })
     return false
+  }
+}
+
+// --- Resolve: AI merges base into the PR head and fixes the conflicts ---
+
+function resolvePrompt(owner, repo, pr, conflicts) {
+  return `You are resolving merge conflicts on pull request #${pr.number} ("${pr.title}") in ${owner}/${repo}. The PR's head branch ("${pr.headRefName}") is checked out in your working directory, and its base branch ("${pr.baseRefName}") has just been merged into it — leaving git conflict markers in the files below.
+
+--- CONFLICTED FILES ---
+${conflicts.map((f) => `- ${f}`).join('\n')}
+--- END CONFLICTED FILES ---
+
+Your job: open each conflicted file and resolve EVERY conflict region (the \`<<<<<<<\` / \`=======\` / \`>>>>>>>\` blocks), preserving the intent of BOTH sides — the PR's changes AND the base branch's changes. Remove all conflict markers. When the resolution is ambiguous, read the surrounding code for context and choose the result that keeps the program correct and coherent; do not simply discard one side.
+
+Guidelines:
+- You are already at the repo root. Use relative paths only; never cd elsewhere or touch other locations — those attempts are blocked and waste turns.
+- Work in parallel: when reading several files, issue those reads together in one step.
+- Resolve the conflicts ONLY. Do not make unrelated changes.
+- Do NOT run git (no add/commit/merge/push) and do NOT open a PR — the harness completes the merge commit and pushes. Just leave the resolved files saved in the working tree.
+- If a wrong guess would be expensive or irreversible, use the \`ask_user\` tool.
+- End with a 2-4 sentence summary of how you resolved the conflicts.`
+}
+
+export async function startResolve(task) {
+  const { id, owner, repo, issueNumber: prNumber, model } = task
+  try {
+    await updateTask(id, { status: 'preparing' })
+    addEvent(id, { kind: 'status', text: `Fetching PR #${prNumber}…` })
+    const pr = await gh.getPr(owner, repo, prNumber)
+
+    // Gate: only conflicting, same-repo PRs can be resolved (we need push access
+    // to the head branch, which we don't have on a fork).
+    if (pr.mergeable !== 'CONFLICTING') {
+      addEvent(id, { kind: 'error', text: 'This PR has no merge conflicts to resolve.' })
+      await updateTask(id, { status: 'error', error: 'No merge conflicts to resolve.' })
+      return
+    }
+    if (pr.isCrossRepository) {
+      addEvent(id, { kind: 'error', text: "Can't resolve conflicts on a fork PR — push access to its branch is required." })
+      await updateTask(id, { status: 'error', error: 'Cannot resolve conflicts on a fork PR.' })
+      return
+    }
+
+    addEvent(id, { kind: 'status', text: `Merging ${pr.baseRefName} into ${pr.headRefName}…` })
+    const { path: wt, conflicts } = await git.createMergeWorktree(owner, repo, id, pr.headRefName, pr.baseRefName)
+    await updateTask(id, { branch: pr.headRefName, base: pr.baseRefName, headRef: pr.headRefName, prUrl: pr.url })
+
+    if (!conflicts.length) {
+      addEvent(id, { kind: 'status', text: 'Merge produced no conflicts — nothing to resolve.' })
+      await updateTask(id, { status: 'no_changes' })
+      await git.removeWorktree(owner, repo, id)
+      return
+    }
+
+    await updateTask(id, { status: 'running' })
+    addEvent(id, { kind: 'status', text: `Resolving ${conflicts.length} conflicted file(s)…` })
+
+    const ac = new AbortController()
+    sessions.set(id, { id, owner, repo, kind: 'resolve', wt, branch: pr.headRefName, base: pr.baseRefName, ac })
+
+    const res = await runExecution({
+      prompt: resolvePrompt(owner, repo, pr, conflicts),
+      cwd: wt, model, signal: ac.signal,
+      onEvent: (e) => e.kind === 'delta' ? streamText(id, e.text) : addEvent(id, e),
+      askUser: askUserFor(id),
+    })
+
+    if (ac.signal.aborted) {
+      addEvent(id, { kind: 'status', text: 'Resolution stopped — discarding the merge worktree.' })
+      await updateTask(id, { status: 'cancelled' })
+      await git.removeWorktree(owner, repo, id)
+      sessions.delete(id)
+      return
+    }
+
+    // Guard: refuse to commit while conflict markers remain in the tree.
+    if (await git.mergeHasConflictMarkers(wt)) {
+      addEvent(id, { kind: 'error', text: 'Unresolved conflict markers remain — not committing. Review the worktree or retry.' })
+      await updateTask(id, { status: 'error', error: 'Unresolved conflicts remain.' })
+      await git.removeWorktree(owner, repo, id)
+      sessions.delete(id)
+      return
+    }
+
+    addEvent(id, { kind: 'status', text: 'Committing the merge locally…' })
+    await updateTask(id, { status: 'committing', summary: res.summary, costUsd: res.costUsd })
+    await git.commitMerge(wt)
+    await updateTask(id, { status: 'changes_ready', staged: true })
+    addEvent(id, { kind: 'result', text: 'Conflicts resolved (local — not pushed). Review the diff, then push to update the PR.', ok: true })
+    sessions.delete(id) // keep the worktree on disk for the diff + later push
+  } catch (err) {
+    console.error(`[resolve ${id}]`, err)
+    addEvent(id, { kind: 'error', text: err.message })
+    await updateTask(id, { status: 'error', error: err.message })
+    await git.removeWorktree(owner, repo, id).catch(() => {})
+    sessions.delete(id)
   }
 }
 
