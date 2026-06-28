@@ -124,12 +124,22 @@ body {
   font-size: 11px; padding: 1px 8px; border-radius: 10px;
   background: var(--panel-2); color: var(--muted); border: 1px solid var(--border);
 }
-.status-running, .status-preparing, .status-queued, .status-committing,
+.status-running, .status-preparing, .status-queued, .status-planning, .status-committing,
 .status-pushing, .status-opening_pr { color: var(--accent); border-color: var(--accent-dim); }
-.status-waiting { color: #1a1200; background: var(--accent); border-color: var(--accent); font-weight: 600; }
+.status-waiting, .status-planned { color: #1a1200; background: var(--accent); border-color: var(--accent); font-weight: 600; }
 .status-pr_open { color: var(--green); border-color: #1f6f33; }
 .status-error { color: var(--red); border-color: #6e2420; }
 .status-cancelled, .status-no_changes { color: var(--muted); }
+
+.log-user { color: #d2a8ff; font-weight: 600; }
+
+.approve-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 10px; }
+.approve-btn {
+  background: var(--green); color: #03260c; border: none; font-weight: 700;
+  padding: 8px 16px; border-radius: 6px; cursor: pointer; font-size: 13px; white-space: nowrap;
+}
+.approve-btn:disabled { background: var(--panel-2); color: var(--muted); cursor: not-allowed; }
+.ask.ask-waiting { border-top-color: var(--accent-dim); }
 
 .topbar .agents-toggle.needs-you { border-color: var(--accent); color: #1a1200; background: var(--accent); font-weight: 600; }
 

@@ -22,11 +22,13 @@ function timeAgo(iso) {
   return 'just now'
 }
 
-const ACTIVE = new Set(['queued', 'preparing', 'running', 'waiting', 'committing', 'pushing', 'opening_pr'])
+const ACTIVE = new Set(['queued', 'preparing', 'planning', 'planned', 'running', 'waiting', 'committing', 'pushing', 'opening_pr'])
+const NEEDS_YOU = new Set(['planned', 'waiting'])
 const STATUS_LABEL = {
-  queued: 'queued', preparing: 'preparing', running: 'running', waiting: 'needs you',
-  committing: 'committing', pushing: 'pushing', opening_pr: 'opening PR', pr_open: 'PR open',
-  no_changes: 'no changes', cancelled: 'cancelled', error: 'error',
+  queued: 'queued', preparing: 'preparing', planning: 'planning', planned: 'plan ready',
+  running: 'running', waiting: 'needs you', committing: 'committing', pushing: 'pushing',
+  opening_pr: 'opening PR', pr_open: 'PR open', no_changes: 'no changes',
+  cancelled: 'cancelled', error: 'error',
 }
 
 export default function App() {
@@ -74,13 +76,13 @@ export default function App() {
 
   const taskList = Object.values(tasks).sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0))
   const activeCount = taskList.filter((t) => ACTIVE.has(t.status)).length
-  const waitingCount = taskList.filter((t) => t.status === 'waiting').length
+  const waitingCount = taskList.filter((t) => NEEDS_YOU.has(t.status)).length
   const activeRepo = repos.find((r) => r.nameWithOwner === active)
 
   async function dispatch(repoObj, issue, model) {
     const [owner, repo] = repoObj.nameWithOwner.split('/')
     try {
-      const task = await api(`/api/repos/${owner}/${repo}/dispatch`, {
+      const task = await api(`/api/repos/${owner}/${repo}/plan`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -108,6 +110,7 @@ export default function App() {
           onClick={() => setView(view === 'agents' ? 'repo' : 'agents')}
         >
           ⚡ Agents{activeCount ? ` · ${activeCount} active` : ''}{waitingCount ? ` · ${waitingCount} needs you` : ''}
+
         </button>
       </header>
 
@@ -224,7 +227,7 @@ function IssueRow({ issue: it, task, onDispatch }) {
           <option value="haiku">Haiku</option>
         </select>
         <button className="dispatch" disabled={busy} onClick={() => onDispatch(it, model)}>
-          {busy ? '… working' : '⚡ Dispatch'}
+          {busy ? '… working' : '📋 Plan'}
         </button>
       </div>
     </div>
@@ -288,30 +291,45 @@ function AgentDetail({ task }) {
   const logRef = useRef(null)
   const [reply, setReply] = useState('')
   const [sending, setSending] = useState(false)
+  const [approving, setApproving] = useState(false)
   useEffect(() => {
     if (logRef.current) logRef.current.scrollTop = logRef.current.scrollHeight
   }, [task.events?.length, task.status])
 
-  async function cancel() {
-    await api(`/api/tasks/${task.id}/cancel`, { method: 'POST' }).catch(() => {})
+  async function post(path, body) {
+    return api(`/api/tasks/${task.id}/${path}`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: body ? JSON.stringify(body) : undefined,
+    })
   }
 
-  async function sendAnswer() {
+  const waiting = task.status === 'waiting'     // execution paused on a question
+  const planning = task.status === 'planning'   // planner is thinking
+  const planned = task.status === 'planned'     // plan ready, awaiting you
+  const canChat = planning || planned || waiting
+  const busy = ACTIVE.has(task.status)
+
+  async function send() {
     const text = reply.trim()
     if (!text) return
     setSending(true)
     try {
-      await api(`/api/tasks/${task.id}/answer`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ text }),
-      })
+      await post(waiting ? 'answer' : 'message', { text }) // answer a question vs. refine the plan
       setReply('')
     } catch (e) { alert('Failed to send: ' + e.message) }
     finally { setSending(false) }
   }
 
-  const busy = ACTIVE.has(task.status)
-  const waiting = task.status === 'waiting'
+  async function approve() {
+    setApproving(true)
+    try { await post('approve') } catch (e) { alert('Approve failed: ' + e.message) }
+    finally { setApproving(false) }
+  }
+
+  const placeholder = waiting
+    ? 'Answer the question — the agent is paused…'
+    : 'Refine the plan — e.g. “use Argon2id, not the keyring” (⌘/Ctrl+Enter)'
+
   return (
     <>
       <div className="agent-head">
@@ -323,7 +341,7 @@ function AgentDetail({ task }) {
           <StatusBadge status={task.status} />
           {task.model && <span className="badge model-badge">{task.model}</span>}
           {task.branch && <span className="badge">{task.branch}</span>}
-          {busy && <button className="cancel" onClick={cancel}>Cancel</button>}
+          {busy && <button className="cancel" onClick={() => post('cancel')}>Cancel</button>}
           {task.prUrl && <a className="dispatch" href={task.prUrl} target="_blank" rel="noreferrer">Open PR ↗</a>}
         </div>
       </div>
@@ -334,6 +352,7 @@ function AgentDetail({ task }) {
         {(task.events || []).map((e, i) => (
           <div key={i} className={`log-line log-${e.kind}`}>
             {e.kind === 'text' ? <span className="log-text">{e.text}</span>
+              : e.kind === 'user' ? <span className="log-user">🧑 {e.text}</span>
               : e.kind === 'tool' ? <span className="log-tool">{e.text}</span>
               : e.kind === 'question' ? <span className="log-question">❓ {e.text}</span>
               : e.kind === 'answer' ? <span className="log-answer">↩︎ {e.text}</span>
@@ -342,22 +361,29 @@ function AgentDetail({ task }) {
               : <span className="log-status">▸ {e.text}</span>}
           </div>
         ))}
-        {!task.events?.length && <div className="muted">Waiting for the agent to report in…</div>}
+        {!task.events?.length && <div className="muted">Waiting for the planner to report in…</div>}
       </div>
 
-      {waiting && (
-        <div className="ask">
-          <div className="ask-q">❓ {task.question}</div>
+      {canChat && (
+        <div className={`ask ${waiting ? 'ask-waiting' : ''}`}>
+          {waiting && <div className="ask-q">❓ {task.question}</div>}
+          {planned && (
+            <div className="approve-row">
+              <span className="muted">Plan ready. Refine it below, or send it to execution.</span>
+              <button className="approve-btn" disabled={approving} onClick={approve}>
+                {approving ? 'Dispatching…' : '✅ Approve & Dispatch'}
+              </button>
+            </div>
+          )}
           <div className="ask-row">
             <textarea
               className="ask-input"
-              placeholder="Type your answer — the agent is paused, waiting for you…"
+              placeholder={placeholder}
               value={reply}
-              autoFocus
               onChange={(e) => setReply(e.target.value)}
-              onKeyDown={(e) => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) sendAnswer() }}
+              onKeyDown={(e) => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) send() }}
             />
-            <button className="dispatch" disabled={sending || !reply.trim()} onClick={sendAnswer}>
+            <button className="dispatch" disabled={sending || !reply.trim()} onClick={send}>
               {sending ? 'Sending…' : 'Send ↵'}
             </button>
           </div>

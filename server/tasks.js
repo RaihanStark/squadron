@@ -49,10 +49,10 @@ export async function createTask({ owner, repo, issueNumber, issueTitle, model }
   await load()
   const id = randomUUID().slice(0, 8)
   const task = {
-    id, owner, repo, issueNumber, issueTitle, model: model || 'sonnet',
+    id, owner, repo, issueNumber, issueTitle, model: model || 'opus',
     status: 'queued', branch: null, base: null, prUrl: null,
-    summary: null, error: null, costUsd: null, createdAt: Date.now(),
-    events: [],
+    plan: null, question: null, summary: null, error: null, costUsd: null,
+    createdAt: Date.now(), events: [],
   }
   tasks.set(id, task)
   await persist()

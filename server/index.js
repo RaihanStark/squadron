@@ -34,16 +34,26 @@ app.get('/api/repos/:owner/:repo/pulls', handle((req) =>
 
 // --- Agents / tasks (slice 2) ---
 
-// Dispatch an agent at an issue. Returns the created task immediately; the
-// run proceeds in the background and streams over /api/stream.
-app.post('/api/repos/:owner/:repo/dispatch', handle(async (req) => {
+// Start an interactive planning session for an issue. Returns the created task
+// immediately; the plan chat streams over /api/stream.
+app.post('/api/repos/:owner/:repo/plan', handle(async (req) => {
   const { owner, repo } = req.params
   const { issueNumber, issueTitle, model, defaultBranch } = req.body
   if (!issueNumber) throw new Error('issueNumber is required')
   const task = await createTask({ owner, repo, issueNumber, issueTitle, model })
-  runner.dispatch(task, { defaultBranch }).catch((e) => console.error('dispatch crashed', e))
+  runner.startPlan(task, { defaultBranch }).catch((e) => console.error('startPlan crashed', e))
   return task
 }))
+
+// Send a message into a live planning chat.
+app.post('/api/tasks/:id/message', handle(async (req) => {
+  const text = (req.body?.text || '').trim()
+  if (!text) throw new Error('message text is required')
+  return { sent: runner.sendMessage(req.params.id, text) }
+}))
+
+// Approve the current plan and kick off autonomous execution → PR.
+app.post('/api/tasks/:id/approve', handle(async (req) => ({ approved: await runner.approve(req.params.id) })))
 
 app.get('/api/tasks', handle(() => listTasks()))
 

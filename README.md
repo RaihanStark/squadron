@@ -17,23 +17,31 @@ any issue to send an agent at it.
 
 ![Squadron cockpit — repos, backlog, and dispatch](docs/cockpit.png)
 
-## Agents work live — and ask when it matters
+## Plan first, then execute
 
-Every dispatched agent streams its work (reads, edits, commands) into the Agents panel.
-Agents stay autonomous by default, but when a wrong assumption would be expensive or
-irreversible they **pause and ask you** — the run blocks until you answer, then resumes
-exactly where it left off.
+You don't fire an agent blind. Clicking **📋 Plan** starts a **read-only** planning
+session: the agent investigates the code and proposes a concrete plan, and you refine it
+in a chat ("use Argon2id, not the keyring"). Nothing is written yet. When you're happy,
+hit **✅ Approve & Dispatch** — the approved plan becomes the spec for an autonomous
+execution run that edits the code, then opens a pull request. The plan rides along in the
+PR description, so reviewers see the intended approach too.
 
-![Squadron agents — live log and an agent paused on a clarifying question](docs/agents.png)
+![Squadron — an agent's proposed plan with the Approve & Dispatch gate](docs/agents.png)
+
+This front-loads the one part where you add the most value — direction and scope — and
+keeps execution (where agents are reliable) autonomous. During execution, an agent can
+still **pause and ask you** via `ask_user` when a wrong assumption would be expensive,
+resuming where it left off once you answer.
 
 ## What it does
 
 - **Manage the backlog** — open issues across every repo, in one view
-- **Fix issues → PR** — dispatch an agent at an issue; it works in an isolated git
-  worktree, then opens a pull request
+- **Plan → approve → PR** — scope an issue interactively, approve, and an autonomous
+  agent implements it in an isolated git worktree and opens a pull request
 - **Watch agents live** — streamed reads / edits / commands, per agent, in parallel
-- **Stay in the loop** — agents call `ask_user` when they need a decision; you answer
-  inline and they continue
+- **Stay in the loop** — refine the plan in chat; agents call `ask_user` mid-execution
+  when they need a decision
+- **Pick the firepower** — Opus / Sonnet / Haiku per task
 - **Cancel** any run mid-flight
 
 ## How it works
@@ -79,10 +87,12 @@ Open **http://localhost:5173**. To preview with demo data (no real repos touched
 | Slice | Feature | State |
 |------:|---------|:-----:|
 | 1 | Cockpit — repos, backlog, PRs | ✅ |
-| 2 | Dispatch agent — issue → worktree → live stream → PR | ✅ |
+| 2 | Execute — issue → worktree → live stream → PR | ✅ |
 | 3 | Interactive `ask_user` — pause for clarification, resume on answer | ✅ |
-| 4 | PR review — AI review over a diff, post comments | ⏳ |
-| 5 | Parallel agents panel + run history | ⏳ |
+| 4 | Per-task model picker (Opus / Sonnet / Haiku) | ✅ |
+| 5 | Plan first — interactive read-only plan → Approve & Dispatch → execute | ✅ |
+| 6 | PR review — AI review over a diff, post comments | ⏳ |
+| 7 | Parallel agents panel + run history | ⏳ |
 
 ## License
 
