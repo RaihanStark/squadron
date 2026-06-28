@@ -140,38 +140,6 @@ app.get('/api/repos/:owner/:repo/pulls/:number', handle((req) =>
 app.post('/api/repos/:owner/:repo/pulls/:number/merge', handle(async (req) =>
   ({ merged: await github.mergePr(req.params.owner, req.params.repo, req.params.number, { method: req.body?.method }) })))
 
-// Releases for a repo. Listing powers the Release tab; creating cuts a new one —
-// the pushed tag triggers the repo's own release workflow (build/publish), while
-// the GitHub Release is published with notes.
-app.get('/api/repos/:owner/:repo/releases', handle((req) =>
-  github.listReleases(req.params.owner, req.params.repo)))
-
-app.post('/api/repos/:owner/:repo/releases', handle(async (req) => {
-  const { owner, repo } = req.params
-  const { tag, target, title, notes, generateNotes, prerelease, bumpVersion, model, defaultBranch } = req.body || {}
-  const t = (tag || '').trim()
-  if (!t) throw new Error('tag is required')
-  // Bumping the version uses the AI agent (find + edit version manifests, push to
-  // the target branch, then tag), so it runs as a tracked task streamed over
-  // /api/stream rather than a single synchronous gh call.
-  if (bumpVersion) {
-    const task = await createTask({ owner, repo, issueNumber: null, issueTitle: `Release ${t}`, kind: 'release', model })
-    runner.startRelease(task, {
-      tag: t, target, title, notes, generateNotes, prerelease, bumpVersion: true, defaultBranch,
-    }).catch((e) => console.error('startRelease crashed', e))
-    return task
-  }
-  const url = await github.createRelease(owner, repo, {
-    tag: t,
-    target: (target || '').trim() || undefined,
-    title: (title || '').trim() || undefined,
-    notes: (notes || '').trim() || undefined,
-    generateNotes: !!generateNotes,
-    prerelease: !!prerelease,
-  })
-  return { url }
-}))
-
 // --- Agents / tasks (slice 2) ---
 
 // Start an interactive planning session for an issue. Returns the created task

@@ -17,7 +17,7 @@ bus.setMaxListeners(0)
 // its plan is captured, so it can still be approved after a restart.
 const NEEDS_SESSION = new Set([
   'queued', 'preparing', 'planning', 'running', 'errand_idle', 'waiting', 'committing', 'pushing', 'opening_pr',
-  'reviewing', 'posting', 'releasing',
+  'reviewing', 'posting',
 ])
 
 let loaded = false

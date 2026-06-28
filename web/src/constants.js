@@ -1,5 +1,5 @@
 // Task status sets + labels shared across components.
-export const ACTIVE = new Set(['queued', 'preparing', 'planning', 'planned', 'running', 'errand_idle', 'waiting', 'committing', 'changes_ready', 'pushing', 'opening_pr', 'reviewing', 'reviewed', 'posting', 'releasing'])
+export const ACTIVE = new Set(['queued', 'preparing', 'planning', 'planned', 'running', 'errand_idle', 'waiting', 'committing', 'changes_ready', 'pushing', 'opening_pr', 'reviewing', 'reviewed', 'posting'])
 export const NEEDS_YOU = new Set(['planned', 'waiting', 'reviewed', 'changes_ready', 'errand_idle'])
 
 // Statuses where the agent is actively chewing (shows a live "working" indicator)
@@ -7,7 +7,7 @@ export const NEEDS_YOU = new Set(['planned', 'waiting', 'reviewed', 'changes_rea
 export const WORKING_LABEL = {
   queued: 'queued…', preparing: 'preparing…', planning: 'planner thinking…',
   running: 'agent working…', reviewing: 'reviewing the diff…', committing: 'committing…',
-  pushing: 'pushing…', opening_pr: 'opening PR…', posting: 'posting…', releasing: 'cutting release…',
+  pushing: 'pushing…', opening_pr: 'opening PR…', posting: 'posting…',
 }
 
 export const STATUS_LABEL = {
@@ -16,7 +16,6 @@ export const STATUS_LABEL = {
   changes_ready: 'changes ready', pushing: 'pushing',
   opening_pr: 'opening PR', pr_open: 'PR open', no_changes: 'no changes',
   reviewing: 'reviewing', reviewed: 'review ready', posting: 'posting', review_posted: 'review posted',
-  releasing: 'releasing', released: 'released',
   cancelled: 'cancelled', error: 'error', interrupted: 'interrupted',
 }
 
