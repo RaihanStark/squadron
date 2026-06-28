@@ -44,6 +44,7 @@ export default function App() {
   const [repos, setRepos] = useState([])
   const [reposError, setReposError] = useState(null)
   const [active, setActive] = useState(null)
+  const [repoFilter, setRepoFilter] = useState('')
   const [tab, setTab] = useState('backlog')
   const [view, setView] = useState(PARAMS.get('view') === 'agents' ? 'agents' : 'repo') // 'repo' | 'agents' | 'pr'
   const [selectedPr, setSelectedPr] = useState(null) // { repo, pr }
@@ -103,6 +104,10 @@ export default function App() {
   const activeCount = taskList.filter((t) => ACTIVE.has(t.status)).length
   const waitingCount = taskList.filter((t) => NEEDS_YOU.has(t.status)).length
   const activeRepo = repos.find((r) => r.nameWithOwner === active)
+  const filter = repoFilter.trim().toLowerCase()
+  const shownRepos = filter
+    ? repos.filter((r) => r.nameWithOwner.toLowerCase().includes(filter))
+    : repos
 
   async function dispatch(repoObj, issue, model) {
     const [owner, repo] = repoObj.nameWithOwner.split('/')
@@ -167,10 +172,19 @@ export default function App() {
 
       <div className="body">
         <aside className="sidebar">
-          <div className="sidebar-head">REPOS {repos.length ? `· ${repos.length}` : ''}</div>
+          <div className="sidebar-head">REPOS {repos.length ? `· ${shownRepos.length}/${repos.length}` : ''}</div>
+          {repos.length > 0 && (
+            <input
+              className="repo-search"
+              placeholder="Filter repos…"
+              value={repoFilter}
+              onChange={(e) => setRepoFilter(e.target.value)}
+            />
+          )}
           {reposError && <div className="error">⚠ {reposError}</div>}
           {!reposError && !repos.length && <div className="muted">Loading fleet…</div>}
-          {repos.map((r) => {
+          {repos.length > 0 && !shownRepos.length && <div className="muted">No repos match.</div>}
+          {shownRepos.map((r) => {
             const running = taskList.filter((t) => `${t.owner}/${t.repo}` === r.nameWithOwner && ACTIVE.has(t.status)).length
             return (
               <button

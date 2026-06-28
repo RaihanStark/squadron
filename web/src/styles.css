@@ -39,6 +39,14 @@ body {
 }
 .sidebar-head { color: var(--muted); font-size: 11px; letter-spacing: 1px; padding: 8px 10px; }
 
+.repo-search {
+  width: 100%; box-sizing: border-box; margin: 0 0 6px;
+  background: var(--panel-2); border: 1px solid var(--border); border-radius: 6px;
+  color: var(--text); padding: 8px 10px; font-size: 12px; font-family: inherit;
+}
+.repo-search::placeholder { color: var(--muted); }
+.repo-search:focus { outline: none; border-color: var(--accent); }
+
 .repo {
   display: flex; flex-direction: column; gap: 2px; width: 100%;
   text-align: left; background: none; border: none; color: var(--text);
