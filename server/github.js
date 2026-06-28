@@ -41,6 +41,15 @@ export function listRepos({ limit = 100 } = {}) {
   ])
 }
 
+// Metadata for a single repo ("owner/name"). One `gh` call; run in parallel
+// across the curated set instead of listing the user's whole fleet.
+export function getRepo(nameWithOwner) {
+  return gh([
+    'repo', 'view', nameWithOwner,
+    '--json', 'name,nameWithOwner,owner,description,updatedAt,isPrivate,isFork,stargazerCount,url,defaultBranchRef',
+  ])
+}
+
 export function listIssues(owner, repo, { limit = 100 } = {}) {
   return gh([
     'issue', 'list',

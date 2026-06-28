@@ -10,6 +10,7 @@ import * as git from './git.js'
 import * as localIssues from './localIssues.js'
 import * as preview from './preview.js'
 import * as runConfig from './runConfig.js'
+import * as selectedRepos from './selectedRepos.js'
 import { bus, listTasks, getTask, createTask, findActiveByIssue } from './tasks.js'
 
 const app = express()
@@ -31,8 +32,35 @@ app.get('/api/health', handle(async () => ({ ok: true, ts: Date.now() })))
 
 app.get('/api/me', handle(async () => ({ login: await github.currentUser() })))
 
-app.get('/api/repos', handle((req) =>
+// The sidebar fleet = only the repos the user has curated. Fetch each in
+// parallel; if one was deleted/renamed its `gh repo view` throws — drop it
+// rather than failing the whole list.
+app.get('/api/repos', handle(async () => {
+  const names = await selectedRepos.list()
+  const results = await Promise.all(names.map((nwo) =>
+    github.getRepo(nwo).catch((err) => {
+      console.error(`[GET /api/repos] dropping ${nwo}:`, err.message)
+      return null
+    })))
+  return results.filter(Boolean)
+}))
+
+// Every repo accessible to the user — the source for the "Add repo" picker.
+// This is the only place `gh repo list` runs, and only on demand.
+app.get('/api/repos/all', handle((req) =>
   github.listRepos({ limit: Number(req.query.limit) || 100 })))
+
+// The curated set of nameWithOwner strings.
+app.get('/api/selected-repos', handle(() => selectedRepos.list()))
+
+app.post('/api/selected-repos', handle(async (req) => {
+  const nwo = (req.body?.nameWithOwner || '').trim()
+  if (!nwo) throw new Error('nameWithOwner is required')
+  return selectedRepos.add(nwo)
+}))
+
+app.delete('/api/selected-repos/:owner/:repo', handle((req) =>
+  selectedRepos.remove(`${req.params.owner}/${req.params.repo}`)))
 
 // Backlog = local drafts (first) + GitHub issues.
 app.get('/api/repos/:owner/:repo/issues', handle(async (req) => {
