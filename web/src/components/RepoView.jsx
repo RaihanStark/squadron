@@ -6,9 +6,8 @@ import IssueRow from './IssueRow.jsx'
 import ChangeCard from './ChangeCard.jsx'
 import PrCard from './PrCard.jsx'
 import RepoErrand from './RepoErrand.jsx'
-import ReleasePanel from './ReleasePanel.jsx'
 
-export default function RepoView({ repo, tab, setTab, onDispatch, onReview, onOpenTask, onOpenPr, onOpenChanges, onOpenIssue, onStartErrand, onReleaseTask, tasks }) {
+export default function RepoView({ repo, tab, setTab, onDispatch, onReview, onOpenTask, onOpenPr, onOpenChanges, onOpenIssue, onStartErrand, tasks }) {
   const [owner, name] = repo.nameWithOwner.split('/')
   const [issues, setIssues] = useState(null)
   const [pulls, setPulls] = useState(null)
@@ -23,6 +22,11 @@ export default function RepoView({ repo, tab, setTab, onDispatch, onReview, onOp
     loadIssues()
     api(`/api/repos/${owner}/${name}/pulls`).then(setPulls).catch((e) => setError(e.message))
   }, [repo.nameWithOwner])
+
+  // Reset a stale persisted tab (e.g. the removed "release" tab) to the default.
+  useEffect(() => {
+    if (!['backlog', 'review', 'prs'].includes(tab)) setTab('backlog')
+  }, [tab, setTab])
 
   // Latest issue task (plan/execute) per issue, so the backlog shows live status.
   // Review/resolve tasks are keyed by PR number, not issue number — exclude them
@@ -52,9 +56,6 @@ export default function RepoView({ repo, tab, setTab, onDispatch, onReview, onOp
           </button>
           <button className={tab === 'prs' ? 'on' : ''} onClick={() => setTab('prs')}>
             Pull Requests {pulls ? `· ${pulls.length}` : ''}
-          </button>
-          <button className={tab === 'release' ? 'on' : ''} onClick={() => setTab('release')}>
-            Releases
           </button>
           <button className={`errand-toggle ${errandOpen ? 'on' : ''}`} onClick={() => setErrandOpen((o) => !o)}>
             🤖 Quick task
@@ -93,8 +94,6 @@ export default function RepoView({ repo, tab, setTab, onDispatch, onReview, onOp
               ? pulls.map((pr) => <PrCard key={pr.number} pr={pr} task={undefined} onOpenPr={() => onOpenPr(repo, pr)} cta="Review →" />)
               : <div className="muted pad">No open PRs.</div>
         )}
-
-        {tab === 'release' && <ReleasePanel repo={repo} onReleaseTask={onReleaseTask} />}
       </div>
       {errandOpen && <RepoErrand repo={repo} tasks={tasks} onStart={onStartErrand} onOpenChanges={onOpenChanges} />}
       </div>
