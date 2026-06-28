@@ -66,7 +66,7 @@ export function listPulls(owner, repo, { limit = 100 } = {}) {
     '--repo', `${owner}/${repo}`,
     '--state', 'open',
     '--limit', String(limit),
-    '--json', 'number,title,state,labels,updatedAt,createdAt,url,author,isDraft,reviewDecision,additions,deletions',
+    '--json', 'number,title,state,labels,updatedAt,createdAt,url,author,isDraft,reviewDecision,additions,deletions,statusCheckRollup',
   ])
 }
 
@@ -97,13 +97,22 @@ export function getIssue(owner, repo, number) {
   ])
 }
 
-// Full detail for a single PR (incl. head/base refs) — used to set up a review.
+// Full detail for a single PR (incl. head/base refs + CI/merge state) — used to
+// set up a review and to gate the merge button.
 export function getPr(owner, repo, number) {
   return gh([
     'pr', 'view', String(number),
     '--repo', `${owner}/${repo}`,
-    '--json', 'number,title,body,headRefName,baseRefName,url,additions,deletions',
+    '--json', 'number,title,body,headRefName,baseRefName,url,additions,deletions,isDraft,mergeable,mergeStateStatus,statusCheckRollup',
   ])
+}
+
+// Merge a PR via `gh pr merge`. method is one of squash|merge|rebase.
+// GitHub rejects the merge if CI/branch-protection isn't satisfied — that error
+// surfaces to the caller unchanged.
+export function mergePr(owner, repo, number, { method = 'squash' } = {}) {
+  const flag = { merge: '--merge', squash: '--squash', rebase: '--rebase' }[method] || '--squash'
+  return ghRaw(['pr', 'merge', String(number), '--repo', `${owner}/${repo}`, flag])
 }
 
 // The unified diff for a PR.
