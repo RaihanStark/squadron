@@ -137,6 +137,32 @@ export async function postPrReview(owner, repo, number, payload) {
   return res.html_url || ''
 }
 
+// Recent releases for a repo — powers the Release tab + next-version suggestion.
+export function listReleases(owner, repo, { limit = 20 } = {}) {
+  return gh([
+    'release', 'list',
+    '--repo', `${owner}/${repo}`,
+    '--limit', String(limit),
+    '--json', 'tagName,name,isLatest,isPrerelease,isDraft,publishedAt,createdAt',
+  ])
+}
+
+// Cut a new release: creates the git tag (which fires any `on: push: tags`
+// workflow in the repo) and publishes a GitHub Release. Returns the release URL.
+// We always pass either --generate-notes or --notes so `gh` never drops into an
+// interactive editor in this server context.
+export function createRelease(owner, repo, { tag, target, title, notes, generateNotes, prerelease, draft } = {}) {
+  const args = ['release', 'create', tag, '--repo', `${owner}/${repo}`]
+  if (target) args.push('--target', target)
+  if (title) args.push('--title', title)
+  if (prerelease) args.push('--prerelease')
+  if (draft) args.push('--draft')
+  if (generateNotes) args.push('--generate-notes')
+  if (notes) args.push('--notes', notes)
+  if (!generateNotes && !notes) args.push('--notes', '')
+  return ghRaw(args).then((out) => out.split('\n').filter(Boolean).pop())
+}
+
 // Open a PR for an already-pushed branch. Returns the PR URL.
 export function createPr(owner, repo, { head, base, title, body }) {
   return ghRaw([
