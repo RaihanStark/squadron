@@ -1,4 +1,8 @@
-# 🛩 Squadron
+<p align="center">
+  <img src="build/icon.png" alt="Squadron" width="160" height="160" />
+</p>
+
+<h1 align="center">🛩 Squadron</h1>
 
 **A local cockpit for commanding Claude agents across your fleet of GitHub repos.**
 
