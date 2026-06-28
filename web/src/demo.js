@@ -155,10 +155,15 @@ diff --git a/src/app.js b/src/app.js
 // A staged local change set (agent committed in a worktree, not pushed).
 export const changeTask = {
   id: 'tchg', owner: 'acme', repo: 'financy', kind: 'plan', issueNumber: 35,
-  issueTitle: 'Add CSV import for transactions', status: 'changes_ready', model: 'opus',
+  issueTitle: 'Add CSV import for transactions', status: 'changes_ready', model: 'opus', staged: true,
   branch: 'squadron/tchg', base: 'main', costUsd: 0.21, createdAt: now - 30000,
   summary: 'Added a CSV importer (src/import.js) that parses rows into transaction objects and wired an `import` command into the CLI. Mirrors the existing export path.',
-  events: [],
+  events: [
+    { kind: 'text', text: 'Implemented the CSV importer and wired it into the CLI.' },
+    { kind: 'tool', text: '📝 write src/import.js' },
+    { kind: 'tool', text: '✏️  edit src/app.js' },
+    { kind: 'result', text: 'execution finished', ok: true },
+  ],
 }
 
 export function demoApi(path, opts) {

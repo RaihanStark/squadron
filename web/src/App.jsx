@@ -253,9 +253,11 @@ function RepoView({ repo, tab, setTab, onDispatch, onReview, onOpenTask, onOpenP
     if (`${t.owner}/${t.repo}` === repo.nameWithOwner && (t.kind || 'plan') !== 'review') taskByIssue[t.issueNumber] = t
   }
 
-  // "Ready to Review" = local agent changes, committed in a worktree, not yet pushed.
+  // "Ready to Review" = local agent changes staged in a worktree — kept here
+  // through revisions (running/waiting) until pushed or discarded.
   const changeTasks = tasks.filter((t) =>
-    `${t.owner}/${t.repo}` === repo.nameWithOwner && (t.kind || 'plan') !== 'review' && t.status === 'changes_ready')
+    `${t.owner}/${t.repo}` === repo.nameWithOwner && (t.kind || 'plan') !== 'review'
+    && t.staged && !['pr_open', 'cancelled'].includes(t.status))
 
   return (
     <>
@@ -543,170 +545,169 @@ function ChangesDetail({ task, onBack }) {
   const [files, setFiles] = useState(null)
   const [error, setError] = useState(null)
   const [pushing, setPushing] = useState(false)
-  const [preview, setPreview] = useState(null) // { status, url, logs, command, source }
+  const [preview, setPreview] = useState(null)
   const [cmd, setCmd] = useState('')
   const [cmdDirty, setCmdDirty] = useState(false)
-  const [reviseText, setReviseText] = useState('')
-  const [reviseSending, setReviseSending] = useState(false)
-  const [reply, setReply] = useState('')
+  const [chatText, setChatText] = useState('')
+  const [sending, setSending] = useState(false)
+  const [chatW, setChatW] = useState(400)
+  const [dockOpen, setDockOpen] = useState(false)
   const logRef = useRef(null)
+  const dragging = useRef(false)
 
-  // (Re)load the diff on open and whenever the agent finishes a revision.
+  // (Re)load the diff on open and whenever a revision finishes.
   useEffect(() => {
     if (!task || ['pr_open', 'cancelled'].includes(task.status)) return
     api(`/api/tasks/${task.id}/diff`).then((r) => setFiles(parseDiff(r.diff || ''))).catch((e) => setError(e.message))
   }, [task?.id, task?.status])
 
-  useEffect(() => { if (logRef.current) logRef.current.scrollTop = logRef.current.scrollHeight }, [task?.events?.length])
+  useEffect(() => { if (logRef.current) logRef.current.scrollTop = logRef.current.scrollHeight }, [task?.events?.length, task?.status])
 
-  // Poll the preview process state while this view is open.
+  // Poll preview process state.
   useEffect(() => {
     if (!task) return
     let alive = true
-    const poll = () => api(`/api/tasks/${task.id}/preview`).then((s) => {
-      if (!alive) return
-      setPreview(s)
-      setCmd((c) => (cmdDirty ? c : (s.command || '')))
-    }).catch(() => {})
-    poll()
-    const i = setInterval(poll, 1500)
+    const poll = () => api(`/api/tasks/${task.id}/preview`).then((s) => { if (!alive) return; setPreview(s); setCmd((c) => (cmdDirty ? c : (s.command || ''))) }).catch(() => {})
+    poll(); const i = setInterval(poll, 1500)
     return () => { alive = false; clearInterval(i) }
   }, [task?.id, cmdDirty])
 
+  // Drag-to-resize the chat panel.
+  useEffect(() => {
+    const move = (e) => { if (dragging.current) setChatW(Math.max(300, Math.min(760, window.innerWidth - e.clientX))) }
+    const up = () => { dragging.current = false; document.body.style.userSelect = '' }
+    window.addEventListener('mousemove', move); window.addEventListener('mouseup', up)
+    return () => { window.removeEventListener('mousemove', move); window.removeEventListener('mouseup', up) }
+  }, [])
+
   if (!task) return <div className="empty">These changes are no longer available.</div>
 
-  async function push() {
-    setPushing(true)
-    try { await api(`/api/tasks/${task.id}/push`, { method: 'POST' }); onBack() }
-    catch (e) { alert('Push failed: ' + e.message) }
-    finally { setPushing(false) }
-  }
-  async function discard() {
-    if (!confirm('Discard these local changes? This cancels the task and removes its worktree.')) return
-    try { await api(`/api/tasks/${task.id}/cancel`, { method: 'POST' }); onBack() } catch (e) { alert(e.message) }
-  }
   const [owner, name] = `${task.owner}/${task.repo}`.split('/')
-  async function startPreview() {
-    if (cmdDirty) { await api(`/api/repos/${owner}/${name}/run-command`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ command: cmd }) }).catch(() => {}); setCmdDirty(false) }
-    await api(`/api/tasks/${task.id}/preview`, { method: 'POST' }).catch((e) => alert('Start failed: ' + e.message))
-  }
-  async function stopPreview() { await api(`/api/tasks/${task.id}/preview`, { method: 'DELETE' }).catch(() => {}) }
-  async function revise() {
-    const instruction = reviseText.trim()
-    if (!instruction) return
-    setReviseSending(true)
-    try { await api(`/api/tasks/${task.id}/revise`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ instruction }) }); setReviseText('') }
-    catch (e) { alert('Failed: ' + e.message) }
-    finally { setReviseSending(false) }
-  }
-  async function stopRevise() { await api(`/api/tasks/${task.id}/stop`, { method: 'POST' }).catch(() => {}) }
-  async function sendAnswer() {
-    const text = reply.trim(); if (!text) return
-    try { await api(`/api/tasks/${task.id}/answer`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text }) }); setReply('') }
-    catch (e) { alert('Failed: ' + e.message) }
-  }
-
   const ready = task.status === 'changes_ready'
   const revising = ['preparing', 'running', 'committing'].includes(task.status)
   const waiting = task.status === 'waiting'
   const pStatus = preview?.status || 'stopped'
   const pRunning = ['preparing', 'starting', 'running'].includes(pStatus)
+
+  async function push() {
+    setPushing(true)
+    try { await api(`/api/tasks/${task.id}/push`, { method: 'POST' }); onBack() }
+    catch (e) { alert('Push failed: ' + e.message) } finally { setPushing(false) }
+  }
+  async function discard() {
+    if (!confirm('Discard these local changes? This removes the worktree.')) return
+    try { await api(`/api/tasks/${task.id}/cancel`, { method: 'POST' }); onBack() } catch (e) { alert(e.message) }
+  }
+  async function startPreview() {
+    if (cmdDirty) { await api(`/api/repos/${owner}/${name}/run-command`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ command: cmd }) }).catch(() => {}); setCmdDirty(false) }
+    setDockOpen(true)
+    await api(`/api/tasks/${task.id}/preview`, { method: 'POST' }).catch((e) => alert('Start failed: ' + e.message))
+  }
+  async function stopPreview() { await api(`/api/tasks/${task.id}/preview`, { method: 'DELETE' }).catch(() => {}) }
+  async function stopRevise() { await api(`/api/tasks/${task.id}/stop`, { method: 'POST' }).catch(() => {}) }
+  async function send() {
+    const text = chatText.trim()
+    if (!text) return
+    setSending(true)
+    try {
+      if (waiting) await api(`/api/tasks/${task.id}/answer`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text }) })
+      else await api(`/api/tasks/${task.id}/revise`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ instruction: text }) })
+      setChatText('')
+    } catch (e) { alert('Failed: ' + e.message) } finally { setSending(false) }
+  }
+
   return (
-    <>
-      <div className="main-head pr-head">
-        <div>
+    <div className="ide">
+      <div className="main-head pr-head ide-head">
+        <div className="issue-head-main">
           <button className="link-btn" onClick={onBack}>← back</button>
           <h1>Changes for #{task.issueNumber} <span className="muted">{task.issueTitle}</span></h1>
         </div>
         <div className="agent-actions">
           <StatusBadge status={task.status} />
           {task.branch && <span className="badge">{task.branch}</span>}
-          {revising && <button className="cancel" onClick={stopRevise}>■ Stop</button>}
           {ready && <button className="cancel" onClick={discard}>Discard</button>}
           {ready && <button className="approve-btn" disabled={pushing} onClick={push}>{pushing ? 'Pushing…' : '⬆ Push & Open PR'}</button>}
           {task.prUrl && <a className="dispatch" href={task.prUrl} target="_blank" rel="noreferrer">Open PR ↗</a>}
         </div>
       </div>
 
-      {task.summary && <div className="review-summary">🤖 {task.summary}</div>}
-
-      {ready && (
-        <div className="ask">
-          <div className="ask-row">
-            <textarea className="ask-input" placeholder="Need more changes? Tell the agent — e.g. “also handle empty CSV rows / add a test” (⌘/Ctrl+Enter)"
-              value={reviseText} onChange={(e) => setReviseText(e.target.value)}
-              onKeyDown={(e) => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) revise() }} />
-            <button className="approve-btn" disabled={reviseSending || !reviseText.trim()} onClick={revise}>
-              {reviseSending ? 'Sending…' : '💬 Request changes'}
-            </button>
-          </div>
+      <div className="ide-body">
+        <div className="ide-editor">
+          {task.summary && <div className="review-summary">🤖 {task.summary}</div>}
+          {error && <div className="error pad">⚠ {error}</div>}
+          {files === null && !error && <div className="muted pad">Loading changes…</div>}
+          {files && !files.length && <div className="muted pad">No changes in the working tree yet.</div>}
+          {files && files.map((f, fi) => <DiffFile key={fi} file={f} findings={[]} />)}
         </div>
-      )}
 
-      {(revising || waiting) && (
-        <div className={`ask ${waiting ? 'ask-waiting' : ''}`}>
-          <div className="approve-row">
-            <span className="muted">{waiting ? '❓ The agent has a question — answer below.' : '✶ The agent is revising the changes…'}</span>
+        <div className="ide-resize" onMouseDown={() => { dragging.current = true; document.body.style.userSelect = 'none' }} />
+
+        <div className="ide-chat" style={{ width: chatW }}>
+          <div className="chat-head">
+            💬 Agent
+            <span className={`status status-${revising ? 'running' : waiting ? 'waiting' : 'changes_ready'}`}>{revising ? 'working…' : waiting ? 'needs you' : 'idle'}</span>
           </div>
-          <div className="log revise-log" ref={logRef}>
-            {(task.events || []).slice(-100).map((e, i) => (
-              <div key={i} className={`log-line log-${e.kind}`}>
-                {e.kind === 'user' ? `🧑 ${e.text}` : e.kind === 'question' ? `❓ ${e.text}` : e.kind === 'answer' ? `↩︎ ${e.text}`
-                  : e.kind === 'result' ? `✅ ${e.text}` : e.kind === 'error' ? `⚠ ${e.text}` : e.kind === 'status' ? `▸ ${e.text}` : e.text}
-              </div>
-            ))}
+          <div className="chat-log" ref={logRef}>
+            {(task.events || []).map((e, i) => <ChatLine key={i} e={e} />)}
+            {!task.events?.length && <div className="muted">Ask the agent to change anything — it revises in this worktree and the diff updates on the left.</div>}
+            {revising && <div className="log-working"><span className="dots"><span /><span /><span /></span>working…</div>}
           </div>
-          {waiting && (
-            <div className="ask-row">
-              <textarea className="ask-input" placeholder="Answer the agent…" value={reply} autoFocus
-                onChange={(e) => setReply(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) sendAnswer() }} />
-              <button className="dispatch" disabled={!reply.trim()} onClick={sendAnswer}>Send ↵</button>
+          {waiting && <div className="chat-q">❓ {task.question}</div>}
+          <div className="chat-input">
+            <textarea value={chatText} placeholder={waiting ? 'Answer the agent…' : 'Request changes — e.g. “add a test for empty rows”  (⌘/Ctrl+Enter)'}
+              onChange={(e) => setChatText(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) send() }} />
+            <div className="chat-actions">
+              {revising && !waiting && <button className="cancel" onClick={stopRevise}>■ Stop</button>}
+              <button className="approve-btn" disabled={sending || !chatText.trim() || (revising && !waiting)} onClick={send}>
+                {sending ? '…' : waiting ? 'Answer ↵' : 'Send ↵'}
+              </button>
             </div>
-          )}
+          </div>
         </div>
-      )}
+      </div>
 
-      <div className="preview">
-        <div className="preview-bar">
-          <span className="preview-title">▶ Live preview</span>
-          <input className="cmd-input" value={cmd} placeholder="run command (e.g. npm run dev, go run .)"
-            onChange={(e) => { setCmd(e.target.value); setCmdDirty(true) }} disabled={pRunning} />
-          {preview?.source && !cmdDirty && <span className="muted">{preview.source}</span>}
-          {pRunning
-            ? <button className="cancel" onClick={stopPreview}>■ Stop</button>
-            : <button className="approve-btn" onClick={startPreview}>▶ Start</button>}
-          <span className={`status status-${pStatus === 'running' ? 'running' : pStatus === 'error' || pStatus === 'exited' ? 'error' : 'preparing'}`}>{pStatus}</span>
-          {preview?.url && <a className="dispatch" href={preview.url} target="_blank" rel="noreferrer">Open {preview.url} ↗</a>}
+      <div className={`ide-dock ${dockOpen ? 'open' : ''}`}>
+        <div className="dock-bar" onClick={() => setDockOpen((o) => !o)}>
+          <span className="dock-title">{dockOpen ? '▾' : '▸'} Preview &amp; Logs</span>
+          <span className="muted">{pRunning ? `running${preview?.url ? ` · ${preview.url}` : ''}` : pStatus}</span>
         </div>
-
-        {preview?.url && (
-          <iframe className="preview-frame" src={preview.url} title="preview" />
-        )}
-        {pRunning && !preview?.url && (
-          <div className="muted preview-note">Running — no web URL detected. If this is a desktop app (e.g. a Go/Fyne GUI), its window opened on your machine. Logs below.</div>
-        )}
-        {preview?.logs?.length ? (
-          <div className="preview-logs">
-            {preview.logs.slice(-200).map((line, i) => (
-              <div key={i} className="log-row">
-                {parseAnsi(line).map((seg, j) => (
-                  <span key={j} style={{ color: seg.color || undefined, fontWeight: seg.bold ? 700 : undefined }}>{seg.text}</span>
+        {dockOpen && (
+          <div className="dock-body">
+            <div className="preview-bar">
+              <input className="cmd-input" value={cmd} placeholder="run command (e.g. npm run dev, go run .)" disabled={pRunning}
+                onChange={(e) => { setCmd(e.target.value); setCmdDirty(true) }} />
+              {preview?.source && !cmdDirty && <span className="muted">{preview.source}</span>}
+              {pRunning ? <button className="cancel" onClick={stopPreview}>■ Stop</button> : <button className="approve-btn" onClick={startPreview}>▶ Start</button>}
+              {preview?.url && <a className="dispatch" href={preview.url} target="_blank" rel="noreferrer">Open {preview.url} ↗</a>}
+            </div>
+            {preview?.url && <iframe className="preview-frame" src={preview.url} title="preview" />}
+            {pRunning && !preview?.url && <div className="muted preview-note">Running — no web URL detected. A desktop app (e.g. Go/Fyne) opens its window on your machine.</div>}
+            {preview?.logs?.length ? (
+              <div className="preview-logs">
+                {preview.logs.slice(-300).map((line, i) => (
+                  <div key={i} className="log-row">{parseAnsi(line).map((s, j) => <span key={j} style={{ color: s.color || undefined, fontWeight: s.bold ? 700 : undefined }}>{s.text}</span>)}</div>
                 ))}
               </div>
-            ))}
+            ) : null}
           </div>
-        ) : null}
+        )}
       </div>
-
-      <div className="diff-view">
-        {error && <div className="error pad">⚠ {error}</div>}
-        {files === null && !error && <div className="muted pad">Loading changes…</div>}
-        {files && !files.length && <div className="muted pad">No changes in the working tree.</div>}
-        {files && files.map((f, fi) => <DiffFile key={fi} file={f} findings={[]} />)}
-      </div>
-    </>
+    </div>
   )
 }
+
+function ChatLine({ e }) {
+  if (e.kind === 'user') return <div className="chat-msg chat-user">{e.text}</div>
+  if (e.kind === 'question') return <div className="chat-msg chat-agent">❓ {e.text}</div>
+  if (e.kind === 'answer') return <div className="chat-msg chat-user">↩︎ {e.text}</div>
+  if (e.kind === 'text') return <div className="chat-msg chat-agent">{e.text}</div>
+  if (e.kind === 'tool') return <div className="chat-tool">{e.text}</div>
+  if (e.kind === 'result') return <div className="chat-result">{e.ok ? '✅' : '⚠️'} {e.text}</div>
+  if (e.kind === 'error') return <div className="chat-err">⚠ {e.text}</div>
+  return <div className="chat-status">▸ {e.text}</div>
+}
+
 
 function PrDetail({ repo, pr, task, onReview, onBack }) {
   const [owner, name] = repo.nameWithOwner.split('/')

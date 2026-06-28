@@ -93,7 +93,7 @@ export async function createTask({ owner, repo, issueNumber, issueTitle, model, 
   const task = {
     id, owner, repo, kind, issueNumber, issueTitle, local, body, model: model || 'opus',
     status: 'queued', branch: null, base: null, prUrl: null,
-    plan: null, review: null, findings: null, question: null, summary: null, error: null, costUsd: null,
+    plan: null, review: null, findings: null, question: null, summary: null, error: null, costUsd: null, staged: false,
     createdAt: Date.now(), events: [],
   }
   tasks.set(id, task)

@@ -193,6 +193,38 @@ body {
   font-size: 14px; line-height: 1.6; color: var(--text);
 }
 
+/* --- Ready-to-Review mini-IDE --- */
+.ide { flex: 1; display: flex; flex-direction: column; min-height: 0; }
+.ide-head { flex: 0 0 auto; }
+.ide-body { flex: 1; display: flex; min-height: 0; }
+.ide-editor { flex: 1; overflow-y: auto; min-width: 0; }
+.ide-resize { flex: 0 0 5px; cursor: col-resize; background: var(--border); }
+.ide-resize:hover { background: var(--accent); }
+.ide-chat { flex: 0 0 auto; display: flex; flex-direction: column; min-height: 0; border-left: 1px solid var(--border); background: var(--panel); }
+
+.chat-head { flex: 0 0 auto; padding: 10px 14px; border-bottom: 1px solid var(--border); font-weight: 600; display: flex; align-items: center; gap: 8px; }
+.chat-log { flex: 1; overflow-y: auto; padding: 12px 14px; display: flex; flex-direction: column; gap: 8px; font-size: 13px; }
+.chat-msg { padding: 7px 11px; border-radius: 8px; white-space: pre-wrap; word-break: break-word; line-height: 1.5; max-width: 96%; }
+.chat-agent { background: var(--panel-2); color: var(--text); align-self: flex-start; }
+.chat-user { background: var(--accent-dim); color: #fff; align-self: flex-end; }
+.chat-tool { color: #79c0ff; font-family: ui-monospace, Menlo, monospace; font-size: 12px; }
+.chat-status { color: var(--accent); font-size: 12px; }
+.chat-result { color: var(--green); font-weight: 600; font-size: 12.5px; }
+.chat-err { color: var(--red); font-size: 12.5px; }
+.chat-q { flex: 0 0 auto; padding: 8px 14px; background: rgba(240,165,0,0.08); border-top: 1px solid var(--accent-dim); color: var(--accent); font-weight: 600; }
+.chat-input { flex: 0 0 auto; border-top: 1px solid var(--border); padding: 10px; display: flex; flex-direction: column; gap: 8px; }
+.chat-input textarea { width: 100%; min-height: 62px; resize: vertical; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; color: var(--text); padding: 9px 11px; font-family: inherit; font-size: 13px; }
+.chat-input textarea:focus { outline: none; border-color: var(--accent); }
+.chat-actions { display: flex; justify-content: flex-end; gap: 8px; }
+
+.ide-dock { flex: 0 0 auto; border-top: 1px solid var(--border); background: var(--panel); display: flex; flex-direction: column; }
+.ide-dock.open { height: 340px; }
+.dock-bar { flex: 0 0 auto; display: flex; justify-content: space-between; align-items: center; padding: 9px 16px; cursor: pointer; font-size: 12px; }
+.dock-title { font-weight: 600; color: var(--accent); }
+.dock-body { flex: 1; overflow-y: auto; display: flex; flex-direction: column; min-height: 0; }
+.dock-body .preview-frame { flex: 1; min-height: 180px; height: auto; }
+.dock-body .preview-logs { flex: 0 0 auto; max-height: 150px; }
+
 /* Live preview (slice 11) */
 .preview { border-bottom: 1px solid var(--border); }
 .preview-bar { display: flex; align-items: center; gap: 10px; padding: 10px 16px; flex-wrap: wrap; }

@@ -227,7 +227,7 @@ async function finalize(ctx, res) {
     sessions.delete(id)
     return
   }
-  await updateTask(id, { status: 'changes_ready' })
+  await updateTask(id, { status: 'changes_ready', staged: true })
   addEvent(id, { kind: 'result', text: 'Changes ready for review (local — not pushed). Review the diff, then push to open a PR.', ok: true })
   sessions.delete(id) // keep the worktree on disk for the diff + later push
 }

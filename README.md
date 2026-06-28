@@ -34,7 +34,11 @@ more changes** — the agent re-runs in the same worktree, revises, and you re-r
 pause to ask you mid-revision). So the flow is **plan → approve → review → (iterate) →
 push** — nothing leaves your machine until you say so.
 
-![Squadron — an agent's local changes staged for review before push](docs/changes.png)
+Ready to Review is a **mini-IDE**: the diff is the editor, a resizable **Agent chat** on
+the right drives revisions (always-on input, interrupt anytime), and a collapsible
+**Preview & Logs** dock sits at the bottom.
+
+![Squadron — the Ready-to-Review mini-IDE: diff, agent chat, preview dock](docs/ide.png)
 
 This front-loads the one part where you add the most value — direction and scope — and
 keeps execution (where agents are reliable) autonomous. During execution, an agent can
