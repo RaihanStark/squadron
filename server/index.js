@@ -32,6 +32,9 @@ app.get('/api/repos/:owner/:repo/issues', handle((req) =>
 app.get('/api/repos/:owner/:repo/pulls', handle((req) =>
   github.listPulls(req.params.owner, req.params.repo)))
 
+app.get('/api/repos/:owner/:repo/pulls/:number/diff', handle(async (req) =>
+  ({ diff: await github.getPrDiff(req.params.owner, req.params.repo, req.params.number) })))
+
 // --- Agents / tasks (slice 2) ---
 
 // Start an interactive planning session for an issue. Returns the created task

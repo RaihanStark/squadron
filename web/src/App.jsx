@@ -1,5 +1,6 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState, Fragment } from 'react'
 import { demoApi } from './demo.js'
+import { parseDiff, filePath } from './diff.js'
 
 const PARAMS = new URLSearchParams(typeof location !== 'undefined' ? location.search : '')
 const DEMO = PARAMS.has('demo')
@@ -44,7 +45,8 @@ export default function App() {
   const [reposError, setReposError] = useState(null)
   const [active, setActive] = useState(null)
   const [tab, setTab] = useState('backlog')
-  const [view, setView] = useState(PARAMS.get('view') === 'agents' ? 'agents' : 'repo') // 'repo' | 'agents'
+  const [view, setView] = useState(PARAMS.get('view') === 'agents' ? 'agents' : 'repo') // 'repo' | 'agents' | 'pr'
+  const [selectedPr, setSelectedPr] = useState(null) // { repo, pr }
 
   // Tasks keyed by id, kept live via SSE.
   const [tasks, setTasks] = useState({})
@@ -144,6 +146,11 @@ export default function App() {
     setView('agents')
   }
 
+  function openPr(repoObj, pr) {
+    setSelectedPr({ repo: repoObj, pr })
+    setView('pr')
+  }
+
   return (
     <div className="app">
       <header className="topbar">
@@ -181,8 +188,16 @@ export default function App() {
         <main className="main">
           {view === 'agents' ? (
             <AgentsPanel tasks={taskList} selected={selectedTask} setSelected={setSelectedTask} />
+          ) : view === 'pr' && selectedPr ? (
+            <PrDetail
+              repo={selectedPr.repo}
+              pr={selectedPr.pr}
+              task={taskList.find((t) => `${t.owner}/${t.repo}` === selectedPr.repo.nameWithOwner && t.issueNumber === selectedPr.pr.number && (t.kind || 'plan') === 'review')}
+              onReview={review}
+              onBack={() => setView('repo')}
+            />
           ) : activeRepo ? (
-            <RepoView key={active} repo={activeRepo} tab={tab} setTab={setTab} onDispatch={dispatch} onReview={review} onOpenTask={openTask} tasks={taskList} />
+            <RepoView key={active} repo={activeRepo} tab={tab} setTab={setTab} onDispatch={dispatch} onReview={review} onOpenTask={openTask} onOpenPr={openPr} tasks={taskList} />
           ) : (
             <div className="empty">Select a repo to begin.</div>
           )}
@@ -192,7 +207,7 @@ export default function App() {
   )
 }
 
-function RepoView({ repo, tab, setTab, onDispatch, onReview, onOpenTask, tasks }) {
+function RepoView({ repo, tab, setTab, onDispatch, onReview, onOpenTask, onOpenPr, tasks }) {
   const [owner, name] = repo.nameWithOwner.split('/')
   const [issues, setIssues] = useState(null)
   const [pulls, setPulls] = useState(null)
@@ -234,7 +249,7 @@ function RepoView({ repo, tab, setTab, onDispatch, onReview, onOpenTask, tasks }
           <IssueList issues={issues} taskByIssue={taskByIssue} onOpenTask={onOpenTask} onDispatch={(it, model) => onDispatch(repo, it, model)} />
         )}
         {tab === 'prs' && (
-          <PullList pulls={pulls} taskByPr={taskByPr} onOpenTask={onOpenTask} onReview={(pr, model) => onReview(repo, pr, model)} />
+          <PullList pulls={pulls} taskByPr={taskByPr} onOpenPr={(pr) => onOpenPr(repo, pr)} />
         )}
       </div>
     </>
@@ -294,44 +309,142 @@ function IssueRow({ issue: it, task, onDispatch, onOpenTask }) {
   )
 }
 
-function PullList({ pulls, taskByPr, onOpenTask, onReview }) {
+function PullList({ pulls, taskByPr, onOpenPr }) {
   if (pulls === null) return <div className="muted pad">Loading sorties…</div>
   if (!pulls.length) return <div className="muted pad">No open PRs.</div>
-  return pulls.map((pr) => (
-    <PrRow key={pr.number} pr={pr} task={taskByPr[pr.number]} onOpenTask={onOpenTask} onReview={onReview} />
-  ))
+  return pulls.map((pr) => {
+    const task = taskByPr[pr.number]
+    return (
+      <div key={pr.number} className="card card-click" onClick={() => onOpenPr(pr)}>
+        <div className="card-main">
+          <span className="num">#{pr.number}</span>
+          <span className="title">{pr.title}</span>
+          {pr.isDraft && <span className="badge">draft</span>}
+        </div>
+        <div className="card-meta">
+          <span className="diff add">+{pr.additions}</span>
+          <span className="diff del">−{pr.deletions}</span>
+          {pr.reviewDecision && <span className="badge">{pr.reviewDecision.toLowerCase().replace('_', ' ')}</span>}
+          <span className="muted">{timeAgo(pr.updatedAt)}</span>
+          {task && task.findings?.length ? <span className="badge model-badge">{task.findings.length} finding(s)</span> : null}
+          {task && <StatusBadge status={task.status} />}
+          <span className="chev">View changes →</span>
+        </div>
+      </div>
+    )
+  })
 }
 
-function PrRow({ pr, task, onOpenTask, onReview }) {
+function PrDetail({ repo, pr, task, onReview, onBack }) {
+  const [owner, name] = repo.nameWithOwner.split('/')
+  const [files, setFiles] = useState(null)
+  const [error, setError] = useState(null)
   const [model, setModel] = useState('opus')
-  const inflight = task && ACTIVE.has(task.status)
-  const verb = task?.status === 'reviewing' ? 'reviewing…' : task?.status === 'reviewed' ? 'review ready' : 'in progress'
+  const [posting, setPosting] = useState(false)
+
+  useEffect(() => {
+    setFiles(null); setError(null)
+    api(`/api/repos/${owner}/${name}/pulls/${pr.number}/diff`)
+      .then((r) => setFiles(parseDiff(r.diff || '')))
+      .catch((e) => setError(e.message))
+  }, [repo.nameWithOwner, pr.number])
+
+  async function postReview() {
+    if (!task) return
+    setPosting(true)
+    try { await api(`/api/tasks/${task.id}/approve`, { method: 'POST' }) }
+    catch (e) { alert('Post failed: ' + e.message) }
+    finally { setPosting(false) }
+  }
+
+  const reviewing = task && ['preparing', 'reviewing', 'posting'].includes(task.status)
+  const reviewed = task && (task.status === 'reviewed' || task.status === 'review_posted')
+  const findings = task?.findings || []
+  const findingsByFile = {}
+  for (const f of findings) (findingsByFile[f.file] ||= []).push(f)
+
   return (
-    <div className="card">
-      <div className="card-main">
-        <a className="num" href={pr.url} target="_blank" rel="noreferrer">#{pr.number}</a>
-        <span className="title">{pr.title}</span>
-        {pr.isDraft && <span className="badge">draft</span>}
+    <>
+      <div className="main-head pr-head">
+        <div>
+          <button className="link-btn" onClick={onBack}>← back</button>
+          <h1>
+            <a href={pr.url} target="_blank" rel="noreferrer">#{pr.number}</a> {pr.title}
+            {' '}<span className="diff add">+{pr.additions}</span> <span className="diff del">−{pr.deletions}</span>
+          </h1>
+        </div>
+        <div className="agent-actions">
+          {reviewing && <span className="status status-reviewing">reviewing…</span>}
+          {task?.status === 'review_posted' && <a className="badge" href={task.prUrl} target="_blank" rel="noreferrer">✓ posted ↗</a>}
+          {task?.status === 'reviewed' && (
+            <button className="approve-btn" disabled={posting} onClick={postReview}>
+              {posting ? 'Posting…' : '✅ Post to PR'}
+            </button>
+          )}
+          {!reviewing && (
+            <>
+              <select className="model-select" value={model} onChange={(e) => setModel(e.target.value)} title="Model">
+                <option value="opus">Opus</option>
+                <option value="sonnet">Sonnet</option>
+                <option value="haiku">Haiku</option>
+              </select>
+              <button className="dispatch" onClick={() => onReview(repo, pr, model)}>🤖 {reviewed ? 'Re-review' : 'AI Review'}</button>
+            </>
+          )}
+        </div>
       </div>
-      <div className="card-meta">
-        <span className="diff add">+{pr.additions}</span>
-        <span className="diff del">−{pr.deletions}</span>
-        {pr.reviewDecision && <span className="badge">{pr.reviewDecision.toLowerCase().replace('_', ' ')}</span>}
-        <span className="muted">{timeAgo(pr.updatedAt)}</span>
-        {task && <StatusBadge status={task.status} />}
-        {inflight ? (
-          <button className="dispatch view-btn" onClick={() => onOpenTask(task.id)}>👁 View {verb}</button>
-        ) : (
-          <>
-            <select className="model-select" value={model} onChange={(e) => setModel(e.target.value)} title="Model for this review">
-              <option value="opus">Opus</option>
-              <option value="sonnet">Sonnet</option>
-              <option value="haiku">Haiku</option>
-            </select>
-            <button className="dispatch" onClick={() => onReview(pr, model)}>🔍 Review</button>
-          </>
-        )}
+
+      {reviewed && task.review && <div className="review-summary">🤖 {task.review}</div>}
+      {reviewed && !findings.length && <div className="review-summary ok">🤖 No issues found.</div>}
+
+      <div className="diff-view">
+        {error && <div className="error pad">⚠ {error}</div>}
+        {files === null && !error && <div className="muted pad">Loading diff…</div>}
+        {files && !files.length && <div className="muted pad">No changes to show.</div>}
+        {files && files.map((f, fi) => <DiffFile key={fi} file={f} findings={findingsByFile[filePath(f)] || []} />)}
       </div>
+    </>
+  )
+}
+
+function DiffFile({ file, findings }) {
+  const placed = new Set()
+  return (
+    <div className="diff-file">
+      <div className="diff-file-head">{filePath(file)}</div>
+      {!file.hunks.length && <div className="diff-empty">No textual diff (binary, rename, or mode change).</div>}
+      {file.hunks.map((h, hi) => (
+        <div className="diff-hunk" key={hi}>
+          <div className="diff-line diff-hunkhead"><span className="ln" /><span className="ln" /><span className="diff-code">{h.header} {h.context}</span></div>
+          {h.lines.map((ln, li) => {
+            const here = findings.filter((fd) => fd.line != null && fd.line === ln.newNum)
+            here.forEach((fd) => placed.add(fd))
+            return (
+              <Fragment key={li}>
+                <div className={`diff-line diff-${ln.type}`}>
+                  <span className="ln">{ln.oldNum ?? ''}</span>
+                  <span className="ln">{ln.newNum ?? ''}</span>
+                  <span className="diff-code">{ln.type === 'add' ? '+' : ln.type === 'del' ? '−' : ' '}{ln.text}</span>
+                </div>
+                {here.map((fd, k) => <FindingCard key={k} f={fd} />)}
+              </Fragment>
+            )
+          })}
+        </div>
+      ))}
+      {findings.filter((fd) => !placed.has(fd)).map((fd, k) => <FindingCard key={`u${k}`} f={fd} unanchored />)}
+    </div>
+  )
+}
+
+function FindingCard({ f, unanchored }) {
+  return (
+    <div className={`finding sev-${f.severity}`}>
+      <div className="finding-head">
+        🤖 <span className="finding-sev">{f.severity}</span>
+        {unanchored && f.line ? <span className="muted"> · line {f.line} (not in shown diff)</span> : null}
+      </div>
+      <div className="finding-body">{f.body}</div>
     </div>
   )
 }

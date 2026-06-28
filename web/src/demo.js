@@ -86,9 +86,49 @@ export const tasks = [
   },
 ]
 
+const DEMO_DIFF = `diff --git a/build-aux/com.acme.Financy.yml b/build-aux/com.acme.Financy.yml
+new file mode 100644
+--- /dev/null
++++ b/build-aux/com.acme.Financy.yml
+@@ -0,0 +1,8 @@
++app-id: com.acme.Financy
++runtime: org.freedesktop.Platform
++runtime-version: '23.08'
++sdk: org.freedesktop.Sdk
++command: financy
++modules:
++  - name: financy
++    buildsystem: simple
+diff --git a/.github/workflows/release.yml b/.github/workflows/release.yml
+--- a/.github/workflows/release.yml
++++ b/.github/workflows/release.yml
+@@ -10,5 +10,9 @@ jobs:
+       - uses: actions/checkout@v4
+       - name: Build
+         run: make build
++      - name: Publish to Flathub
++        run: flatpak-builder --install build build-aux/com.acme.Financy.yml
++        env:
++          FLATHUB_TOKEN: \${{ secrets.FLATHUB_TOKEN }}
+`
+
+export const reviewTask = {
+  id: 'trev', owner: 'acme', repo: 'financy', kind: 'review', issueNumber: 40,
+  issueTitle: 'Release to Flathub', status: 'reviewed', model: 'opus', costUsd: 0.08,
+  createdAt: now - 60000,
+  review: 'The Flathub packaging is solid; a couple of CI-hardening and freshness nits below.',
+  findings: [
+    { file: '.github/workflows/release.yml', line: 14, severity: 'quality', body: '`flatpak-builder` isn’t pinned and `--install` writes system-wide; prefer a pinned builder action and `--user` to keep CI hermetic.' },
+    { file: '.github/workflows/release.yml', line: 16, severity: 'security', body: 'FLATHUB_TOKEN is exposed to a `run:` step — make sure this workflow can’t be triggered by forked PRs, or the token could leak.' },
+    { file: 'build-aux/com.acme.Financy.yml', line: 3, severity: 'quality', body: 'runtime-version ‘23.08’ is aging — bump to the current freedesktop runtime for security updates.' },
+  ],
+  events: [],
+}
+
 export function demoApi(path) {
+  if (/\/pulls\/\d+\/diff$/.test(path)) return Promise.resolve({ diff: DEMO_DIFF })
   if (path === '/api/repos') return Promise.resolve(repos)
-  if (path === '/api/tasks') return Promise.resolve(tasks)
+  if (path === '/api/tasks') return Promise.resolve([reviewTask, ...tasks])
   const m = path.match(/^\/api\/repos\/([^/]+)\/([^/]+)\/(issues|pulls)/)
   if (m) {
     const key = `${m[1]}/${m[2]}`

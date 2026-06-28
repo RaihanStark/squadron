@@ -33,13 +33,22 @@ keeps execution (where agents are reliable) autonomous. During execution, an age
 still **pause and ask you** via `ask_user` when a wrong assumption would be expensive,
 resuming where it left off once you answer.
 
+## Review PRs inline
+
+Click any PR to see its diff in-app. **🤖 AI Review** runs a read-only agent over the
+diff (PR checked out for context) and renders its findings as **inline comment cards
+anchored to the exact lines** — severity-coded (bug / security / quality) — then post the
+whole review to GitHub with one click.
+
+![Squadron — in-app PR diff with inline AI review findings](docs/pr-review.png)
+
 ## What it does
 
 - **Manage the backlog** — open issues across every repo, in one view
 - **Plan → approve → PR** — scope an issue interactively, approve, and an autonomous
   agent implements it in an isolated git worktree and opens a pull request
-- **Review PRs** — a read-only agent reviews the diff (with the PR checked out for
-  context); approve to post it as a PR comment
+- **Review PRs inline** — click a PR to see the diff in-app; **🤖 AI Review** renders the
+  agent's findings as inline comment cards anchored to the exact lines, then post to GitHub
 - **Watch agents live** — streamed reads / edits / commands, per agent, in parallel,
   with a live "working…" indicator so a quiet think never looks like a hang
 - **Stay in the loop** — refine the plan in chat; agents call `ask_user` mid-execution
@@ -97,7 +106,8 @@ Open **http://localhost:5173**. To preview with demo data (no real repos touched
 | 4 | Per-task model picker (Opus / Sonnet / Haiku) | ✅ |
 | 5 | Plan first — interactive read-only plan → Approve & Dispatch → execute | ✅ |
 | 6 | PR review — read-only AI review of a diff → approve → post comment | ✅ |
-| 7 | Parallel agents panel + run history | ⏳ |
+| 7 | In-app diff viewer + inline AI review findings | ✅ |
+| 8 | Parallel agents panel + run history | ⏳ |
 
 ## License
 

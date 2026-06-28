@@ -237,13 +237,55 @@ The complete diff is provided below — that is your primary material. You may r
 
 Review the diff for correctness bugs, security issues, and clear quality problems. Be specific, concise, and fair — skip nitpicks unless they matter.
 
-Output your review as GitHub-flavored markdown:
-- A one or two sentence overall summary.
-- A "## Findings" section: one bullet per issue as **\`path:line\`** — _severity_ (bug / security / quality) — the problem and a concrete suggested fix. If you find no real issues, say so plainly.
+End your reply with EXACTLY ONE fenced \`\`\`json code block and nothing after it, of the form:
+{
+  "summary": "<1-2 sentence overall assessment>",
+  "findings": [
+    { "file": "<repo-relative path>", "line": <line number in the NEW file (right side of the diff) this comment anchors to>, "severity": "bug" | "security" | "quality", "body": "<the problem and a concrete suggested fix>" }
+  ]
+}
+Use NEW-file line numbers (the right side of the diff). If you find no real issues, return an empty "findings" array. You may write brief prose before the JSON block, but the JSON block is what matters.
 
 --- DIFF ---
 ${diff}
 --- END DIFF ---`
+}
+
+// Pull the structured review out of the agent's reply.
+function parseReview(text) {
+  const raw = String(text || '')
+  let json = null
+  const fence = raw.match(/```json\s*([\s\S]*?)```/i)
+  if (fence) json = fence[1]
+  else {
+    const obj = raw.match(/\{[\s\S]*"findings"[\s\S]*\}/)
+    if (obj) json = obj[0]
+  }
+  const stripped = raw.replace(/```json[\s\S]*?```/i, '').trim()
+  if (json) {
+    try {
+      const p = JSON.parse(json.trim())
+      const findings = Array.isArray(p.findings) ? p.findings.map((f) => ({
+        file: String(f.file || ''),
+        line: Number.isFinite(Number(f.line)) ? Number(f.line) : null,
+        severity: String(f.severity || 'quality'),
+        body: String(f.body || ''),
+      })) : []
+      return { summary: (String(p.summary || '').trim() || stripped), findings }
+    } catch { /* fall through */ }
+  }
+  return { summary: stripped, findings: [] }
+}
+
+function reviewToMarkdown(task) {
+  const out = [task.review || 'Reviewed.']
+  if (task.findings?.length) {
+    out.push('', '## Findings')
+    for (const f of task.findings) out.push(`- **\`${f.file}:${f.line ?? '?'}\`** — _${f.severity}_ — ${f.body}`)
+  } else {
+    out.push('', 'No issues found.')
+  }
+  return out.join('\n')
 }
 
 export async function startReview(task) {
@@ -279,8 +321,9 @@ export async function startReview(task) {
       sessions.delete(id)
       return
     }
-    await updateTask(id, { status: 'reviewed', review: res.summary, costUsd: res.costUsd })
-    addEvent(id, { kind: 'status', text: 'Review ready — approve to post it to the PR.' })
+    const { summary, findings } = parseReview(res.summary)
+    await updateTask(id, { status: 'reviewed', review: summary, findings, costUsd: res.costUsd })
+    addEvent(id, { kind: 'status', text: `Review ready — ${findings.length} finding(s). Approve to post to the PR.` })
   } catch (err) {
     console.error(`[review ${id}]`, err)
     addEvent(id, { kind: 'error', text: err.message })
@@ -296,7 +339,8 @@ async function approveReview(taskId, task) {
   try {
     addEvent(taskId, { kind: 'status', text: 'Posting review to the PR…' })
     await updateTask(taskId, { status: 'posting' })
-    const url = await gh.postPrComment(owner, repo, prNumber, `${review}\n\n---\n🤖 Reviewed by Squadron`)
+    const body = reviewToMarkdown(task)
+    const url = await gh.postPrComment(owner, repo, prNumber, `${body}\n\n---\n🤖 Reviewed by Squadron`)
     await updateTask(taskId, { status: 'review_posted', prUrl: url })
     addEvent(taskId, { kind: 'result', text: `Review posted → ${url}`, ok: true })
     sessions.delete(taskId)
