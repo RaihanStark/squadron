@@ -80,7 +80,10 @@ export async function getState(taskId) {
 
 function runInstall(taskId, dir) {
   return new Promise((resolve) => {
-    const proc = spawn('npm', ['install'], { cwd: dir, env: process.env })
+    // Force devDependencies even when the host runs with NODE_ENV=production:
+    // dev/start commands (vite, concurrently, webpack, nodemon…) live there, so
+    // a production-omitting install leaves the preview unable to start.
+    const proc = spawn('npm', ['install', '--include=dev'], { cwd: dir, env: { ...process.env, NODE_ENV: 'development' } })
     const onData = (d) => { for (const l of d.toString().split('\n')) if (l.trim()) log(taskId, l) }
     proc.stdout.on('data', onData)
     proc.stderr.on('data', onData)
@@ -152,6 +155,7 @@ export async function start(taskId) {
     const env = {
       ...process.env,
       BROWSER: 'none', FORCE_COLOR: '1',
+      NODE_ENV: 'development', // it's a dev/preview run — keep tools (vite, etc.) in dev mode
       PORT: String(apiPort),                                   // backend (PORT convention)
       VITE_PORT: String(webPort),                              // frontend dev server
       VITE_API_TARGET: `http://localhost:${apiPort}`,          // proxy → this preview's backend
