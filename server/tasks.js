@@ -12,13 +12,27 @@ const tasks = new Map()
 export const bus = new EventEmitter()
 bus.setMaxListeners(0)
 
+// Statuses that require a live in-memory agent session. These can't survive a
+// process restart, so on load we mark them interrupted. 'planned' is NOT here:
+// its plan is captured, so it can still be approved after a restart.
+const NEEDS_SESSION = new Set([
+  'queued', 'preparing', 'planning', 'running', 'waiting', 'committing', 'pushing', 'opening_pr',
+])
+
 let loaded = false
 async function load() {
   if (loaded) return
   loaded = true
   try {
     for (const t of JSON.parse(await readFile(FILE, 'utf8'))) {
-      t.events = [] // don't restore stale logs
+      if (!Array.isArray(t.events)) t.events = []
+      // A live agent session can't survive a process restart — anything mid-flight
+      // is orphaned. Mark it interrupted so the UI doesn't show a dead "running"
+      // or a fake-actionable state.
+      if (NEEDS_SESSION.has(t.status)) {
+        t.status = 'interrupted'
+        t.events.push({ kind: 'error', text: 'Server restarted — this run was interrupted.', ts: Date.now() })
+      }
       tasks.set(t.id, t)
     }
   } catch { /* no file yet */ }
@@ -26,9 +40,18 @@ async function load() {
 
 async function persist() {
   await mkdir(DATA_DIR, { recursive: true })
-  // Persist everything except the verbose live event log.
-  const data = [...tasks.values()].map(({ events, ...rest }) => rest)
-  await writeFile(FILE, JSON.stringify(data, null, 2))
+  // Persist the full task incl. its event log, so the stream survives reloads.
+  await writeFile(FILE, JSON.stringify([...tasks.values()], null, 2))
+}
+
+// Debounced persist for high-frequency event streaming.
+let persistTimer = null
+function schedulePersist() {
+  if (persistTimer) return
+  persistTimer = setTimeout(() => {
+    persistTimer = null
+    persist().catch((e) => console.error('persist failed:', e.message))
+  }, 400)
 }
 
 function emit(id, payload) {
@@ -93,6 +116,7 @@ export function addEvent(id, event) {
   t.events.push(e)
   if (t.events.length > 800) t.events.splice(0, t.events.length - 800)
   emit(id, { type: 'event', event: e })
+  schedulePersist()
 }
 
 const strip = ({ events, ...rest }) => rest

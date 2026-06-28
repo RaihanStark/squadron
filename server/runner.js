@@ -4,7 +4,7 @@ import * as git from './git.js'
 import * as gh from './github.js'
 import * as questions from './questions.js'
 import { openSession, runExecution, describeTool } from './agent.js'
-import { updateTask, addEvent } from './tasks.js'
+import { updateTask, addEvent, getTask } from './tasks.js'
 
 const sessions = new Map() // taskId -> ctx
 
@@ -117,15 +117,38 @@ export function sendMessage(taskId, text) {
 // --- Execution phase ---
 
 export async function approve(taskId) {
-  const ctx = sessions.get(taskId)
-  if (!ctx || ctx.phase !== 'planning') return false
+  let ctx = sessions.get(taskId)
+
+  // If the planning session was lost (e.g. the server restarted), rebuild just
+  // enough context from the persisted task to execute the captured plan.
+  if (!ctx) {
+    const task = await getTask(taskId)
+    if (!task || task.status !== 'planned' || !task.plan || !task.branch) return false
+    if (!(await git.worktreeExists(taskId))) {
+      addEvent(taskId, { kind: 'error', text: 'Worktree no longer exists — re-plan this issue.' })
+      await updateTask(taskId, { status: 'interrupted' })
+      return false
+    }
+    addEvent(taskId, { kind: 'status', text: 'Resuming after restart — re-fetching issue…' })
+    const issue = await gh.getIssue(task.owner, task.repo, task.issueNumber)
+    ctx = {
+      id: taskId, owner: task.owner, repo: task.repo, issue,
+      wt: git.worktreePathFor(taskId), branch: task.branch, base: task.base,
+      model: task.model, phase: 'planning', plan: task.plan, lastText: task.plan,
+    }
+    sessions.set(taskId, ctx)
+  }
+
+  if (ctx.phase !== 'planning') return false
   ctx.phase = 'executing'
   const plan = ctx.plan || ctx.lastText
 
-  addEvent(taskId, { kind: 'status', text: 'Plan approved — closing planner and starting execution…' })
-  ctx.handle.interrupt()
-  ctx.handle.close()
-  await ctx.handle.done.catch(() => {})
+  addEvent(taskId, { kind: 'status', text: 'Plan approved — starting execution…' })
+  if (ctx.handle) {
+    ctx.handle.interrupt()
+    ctx.handle.close()
+    await ctx.handle.done.catch(() => {})
+  }
 
   const ac = new AbortController()
   ctx.ac = ac

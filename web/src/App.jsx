@@ -28,7 +28,7 @@ const STATUS_LABEL = {
   queued: 'queued', preparing: 'preparing', planning: 'planning', planned: 'plan ready',
   running: 'running', waiting: 'needs you', committing: 'committing', pushing: 'pushing',
   opening_pr: 'opening PR', pr_open: 'PR open', no_changes: 'no changes',
-  cancelled: 'cancelled', error: 'error',
+  cancelled: 'cancelled', error: 'error', interrupted: 'interrupted',
 }
 
 export default function App() {
@@ -52,7 +52,12 @@ export default function App() {
       .catch((e) => setReposError(e.message))
 
     api('/api/tasks').then((list) => {
-      setTasks(Object.fromEntries(list.map((t) => [t.id, t])))
+      // Merge, preferring persisted events but never wiping live ones we already hold.
+      setTasks((prev) => {
+        const next = { ...prev }
+        for (const t of list) next[t.id] = { ...t, events: t.events?.length ? t.events : (prev[t.id]?.events || []) }
+        return next
+      })
     }).catch(() => {})
 
     if (DEMO) return // no live stream in demo mode

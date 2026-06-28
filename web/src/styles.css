@@ -134,7 +134,7 @@ body {
 .status-pushing, .status-opening_pr { color: var(--accent); border-color: var(--accent-dim); }
 .status-waiting, .status-planned { color: #1a1200; background: var(--accent); border-color: var(--accent); font-weight: 600; }
 .status-pr_open { color: var(--green); border-color: #1f6f33; }
-.status-error { color: var(--red); border-color: #6e2420; }
+.status-error, .status-interrupted { color: var(--red); border-color: #6e2420; }
 .status-cancelled, .status-no_changes { color: var(--muted); }
 
 .log-user { color: #d2a8ff; font-weight: 600; }

@@ -22,6 +22,10 @@ const slug = (owner, repo) => `${owner}__${repo}`
 const mirrorPath = (owner, repo) => path.join(REPOS_DIR, slug(owner, repo))
 const worktreePath = (taskId) => path.join(WORKTREES_DIR, taskId)
 
+// Deterministic worktree path for a task (used to rebuild context after a restart).
+export const worktreePathFor = (taskId) => worktreePath(taskId)
+export const worktreeExists = (taskId) => exists(worktreePath(taskId))
+
 // Ensure we have a local clone of the repo to base worktrees on.
 async function ensureMirror(owner, repo) {
   const dir = mirrorPath(owner, repo)
