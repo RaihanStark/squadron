@@ -110,6 +110,14 @@ export async function updateTask(id, patch) {
   emit(id, { type: 'task', task: strip(t) })
 }
 
+// Push a transient partial-text update onto the bus only — NOT persisted and NOT
+// appended to the event log. It's live token streaming; the finalized 'text'
+// event is the source of truth once the turn lands.
+export function streamText(id, text) {
+  if (!tasks.has(id)) return
+  emit(id, { type: 'stream', text })
+}
+
 export function addEvent(id, event) {
   const t = tasks.get(id)
   if (!t) return

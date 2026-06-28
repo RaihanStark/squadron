@@ -13,6 +13,7 @@
     "setup": "npm install && npm --prefix web install",
     "build:web": "npm --prefix web run build",
     "electron": "electron .",
+    "test": "node --test",
     "dist": "npm run build:web && electron-builder --linux rpm"
   },
   "dependencies": {
