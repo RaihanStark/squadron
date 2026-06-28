@@ -51,18 +51,28 @@ export default function App() {
       })
       .catch((e) => setReposError(e.message))
 
-    api('/api/tasks').then((list) => {
-      // Merge, preferring persisted events but never wiping live ones we already hold.
+    // Full re-sync from the server (events are persisted). Keep whichever event
+    // list is longer so a re-sync never regresses live deltas we already hold.
+    const fetchTasks = () => api('/api/tasks').then((list) => {
       setTasks((prev) => {
         const next = { ...prev }
-        for (const t of list) next[t.id] = { ...t, events: t.events?.length ? t.events : (prev[t.id]?.events || []) }
+        for (const t of list) {
+          const prevEvents = prev[t.id]?.events || []
+          const srvEvents = t.events || []
+          next[t.id] = { ...t, events: srvEvents.length >= prevEvents.length ? srvEvents : prevEvents }
+        }
         return next
       })
     }).catch(() => {})
 
+    fetchTasks()
+
     if (DEMO) return // no live stream in demo mode
 
     const es = new EventSource('/api/stream')
+    // Re-sync on every (re)connect so events emitted during a drop (e.g. a
+    // server restart) aren't lost — SSE itself has no replay.
+    es.onopen = () => fetchTasks()
     es.onmessage = (ev) => {
       const payload = JSON.parse(ev.data)
       setTasks((prev) => {
