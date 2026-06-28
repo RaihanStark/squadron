@@ -1,0 +1,21 @@
+{
+  "name": "squadron",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "A local cockpit for commanding Claude agents across your fleet of GitHub repos.",
+  "scripts": {
+    "dev": "concurrently -n server,web -c blue,green \"npm:dev:server\" \"npm:dev:web\"",
+    "dev:server": "node --watch server/index.js",
+    "dev:web": "npm --prefix web run dev",
+    "setup": "npm install && npm --prefix web install"
+  },
+  "dependencies": {
+    "@anthropic-ai/claude-agent-sdk": "^0.3.195",
+    "express": "^4.21.2",
+    "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "concurrently": "^9.1.0"
+  }
+}
