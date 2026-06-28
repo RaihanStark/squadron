@@ -258,6 +258,8 @@ body {
 .log-question { color: var(--accent); font-weight: 600; }
 .log-answer { color: #79c0ff; }
 
+.revise-log { flex: none; max-height: 220px; padding: 8px 4px; }
+
 .log-working {
   display: flex; align-items: center; gap: 8px; margin-top: 6px;
   color: var(--accent); font-style: italic;

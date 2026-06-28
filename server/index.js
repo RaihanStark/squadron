@@ -146,6 +146,13 @@ app.get('/api/tasks/:id/diff', handle(async (req) => {
 // Push the reviewed local changes and open the PR.
 app.post('/api/tasks/:id/push', handle(async (req) => ({ pushed: await runner.pushTask(req.params.id) })))
 
+// Ask the agent for more changes on the staged work (re-runs in the worktree).
+app.post('/api/tasks/:id/revise', handle(async (req) =>
+  ({ revising: await runner.revise(req.params.id, (req.body?.instruction || '')) })))
+
+// Stop an in-flight revision without discarding the staged work.
+app.post('/api/tasks/:id/stop', handle((req) => ({ stopped: runner.stopRun(req.params.id) })))
+
 // Live preview — run the task's worktree to verify the change.
 app.get('/api/tasks/:id/preview', handle((req) => preview.getState(req.params.id)))
 app.post('/api/tasks/:id/preview', handle((req) => preview.start(req.params.id)))

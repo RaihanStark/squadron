@@ -29,9 +29,10 @@ isolated worktree, without pushing**.
 ![Squadron — an agent's proposed plan with the Approve & Dispatch gate](docs/agents.png)
 
 The result lands in **Ready to Review** as local changes. You open it, read the full diff
-of what the agent did, and only then **⬆ Push & Open PR** (or discard). So the flow is
-**plan → approve → review the local diff → push** — you review before anything leaves your
-machine.
+of what the agent did, and then either **⬆ Push & Open PR**, **discard**, or **💬 request
+more changes** — the agent re-runs in the same worktree, revises, and you re-review (it can
+pause to ask you mid-revision). So the flow is **plan → approve → review → (iterate) →
+push** — nothing leaves your machine until you say so.
 
 ![Squadron — an agent's local changes staged for review before push](docs/changes.png)
 

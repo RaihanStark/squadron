@@ -442,6 +442,86 @@ async function approveReview(taskId, task) {
   }
 }
 
+// --- Revise: operator asks the agent for more changes on staged work ---
+
+function revisePrompt(owner, repo, issue, plan, instruction) {
+  return `You are continuing work in a git worktree of ${owner}/${repo}. The working directory ALREADY CONTAINS your previous changes for this task (committed). The operator reviewed them and is asking for more:
+
+--- REQUESTED CHANGES ---
+${instruction}
+--- END REQUESTED CHANGES ---
+${plan ? `\nFor context, the original plan was:\n${plan}\n` : ''}
+Guidelines:
+- Build on the existing changes; make the requested adjustments in the working tree.
+- You are already at the repo root. Relative paths only; never cd elsewhere — blocked.
+- Work in parallel: batch independent reads/greps into one step.
+- Do NOT commit, push, or open a PR — the harness handles git.
+- End with a short summary of what you changed in this revision.`
+}
+
+export async function revise(taskId, instruction) {
+  const task = await getTask(taskId)
+  if (!task || task.status !== 'changes_ready' || !instruction?.trim()) return false
+  if (!(await git.worktreeExists(taskId))) {
+    addEvent(taskId, { kind: 'error', text: 'Worktree no longer exists — re-plan this issue.' })
+    await updateTask(taskId, { status: 'interrupted' })
+    return false
+  }
+  const { owner, repo, issueNumber, model } = task
+  const wt = git.worktreePathFor(taskId)
+  const ac = new AbortController()
+  sessions.set(taskId, { id: taskId, owner, repo, wt, branch: task.branch, base: task.base, ac, revising: true })
+  addEvent(taskId, { kind: 'user', text: instruction })
+  await updateTask(taskId, { status: 'running' })
+
+  ;(async () => {
+    try {
+      const issue = task.local
+        ? { number: null, title: task.issueTitle }
+        : await gh.getIssue(owner, repo, issueNumber).catch(() => ({ title: task.issueTitle }))
+      const res = await runExecution({
+        prompt: revisePrompt(owner, repo, issue, task.plan, instruction),
+        cwd: wt, model, signal: ac.signal,
+        onEvent: (e) => addEvent(taskId, e),
+        askUser: async (q) => {
+          addEvent(taskId, { kind: 'question', text: q })
+          await updateTask(taskId, { status: 'waiting', question: q })
+          const reply = await questions.register(taskId)
+          await updateTask(taskId, { status: 'running', question: null })
+          addEvent(taskId, { kind: 'answer', text: reply })
+          return reply
+        },
+      })
+      if (ac.signal.aborted) {
+        addEvent(taskId, { kind: 'status', text: 'Revision stopped — prior changes kept.' })
+        await updateTask(taskId, { status: 'changes_ready' })
+        sessions.delete(taskId)
+        return
+      }
+      addEvent(taskId, { kind: 'status', text: 'Committing revision…' })
+      await updateTask(taskId, { status: 'committing' })
+      await git.commitAll(wt, `Revise: ${instruction.slice(0, 72)}`)
+      await updateTask(taskId, { status: 'changes_ready', summary: res.summary || task.summary })
+      addEvent(taskId, { kind: 'result', text: 'Revision ready — review the updated diff.', ok: true })
+      sessions.delete(taskId)
+    } catch (err) {
+      console.error(`[revise ${taskId}]`, err)
+      addEvent(taskId, { kind: 'error', text: err.message })
+      await updateTask(taskId, { status: 'changes_ready' }) // keep prior changes
+      sessions.delete(taskId)
+    }
+  })()
+  return true
+}
+
+// Stop an in-flight revision without discarding the staged work.
+export function stopRun(taskId) {
+  questions.clear(taskId)
+  const ctx = sessions.get(taskId)
+  if (ctx?.ac) { ctx.ac.abort(); return true }
+  return false
+}
+
 export function cancel(taskId) {
   questions.clear(taskId)
   preview.stop(taskId)

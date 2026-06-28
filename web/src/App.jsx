@@ -546,12 +546,18 @@ function ChangesDetail({ task, onBack }) {
   const [preview, setPreview] = useState(null) // { status, url, logs, command, source }
   const [cmd, setCmd] = useState('')
   const [cmdDirty, setCmdDirty] = useState(false)
+  const [reviseText, setReviseText] = useState('')
+  const [reviseSending, setReviseSending] = useState(false)
+  const [reply, setReply] = useState('')
+  const logRef = useRef(null)
 
+  // (Re)load the diff on open and whenever the agent finishes a revision.
   useEffect(() => {
-    if (!task) return
-    setFiles(null); setError(null)
+    if (!task || ['pr_open', 'cancelled'].includes(task.status)) return
     api(`/api/tasks/${task.id}/diff`).then((r) => setFiles(parseDiff(r.diff || ''))).catch((e) => setError(e.message))
-  }, [task?.id])
+  }, [task?.id, task?.status])
+
+  useEffect(() => { if (logRef.current) logRef.current.scrollTop = logRef.current.scrollHeight }, [task?.events?.length])
 
   // Poll the preview process state while this view is open.
   useEffect(() => {
@@ -585,8 +591,24 @@ function ChangesDetail({ task, onBack }) {
     await api(`/api/tasks/${task.id}/preview`, { method: 'POST' }).catch((e) => alert('Start failed: ' + e.message))
   }
   async function stopPreview() { await api(`/api/tasks/${task.id}/preview`, { method: 'DELETE' }).catch(() => {}) }
+  async function revise() {
+    const instruction = reviseText.trim()
+    if (!instruction) return
+    setReviseSending(true)
+    try { await api(`/api/tasks/${task.id}/revise`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ instruction }) }); setReviseText('') }
+    catch (e) { alert('Failed: ' + e.message) }
+    finally { setReviseSending(false) }
+  }
+  async function stopRevise() { await api(`/api/tasks/${task.id}/stop`, { method: 'POST' }).catch(() => {}) }
+  async function sendAnswer() {
+    const text = reply.trim(); if (!text) return
+    try { await api(`/api/tasks/${task.id}/answer`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text }) }); setReply('') }
+    catch (e) { alert('Failed: ' + e.message) }
+  }
 
   const ready = task.status === 'changes_ready'
+  const revising = ['preparing', 'running', 'committing'].includes(task.status)
+  const waiting = task.status === 'waiting'
   const pStatus = preview?.status || 'stopped'
   const pRunning = ['preparing', 'starting', 'running'].includes(pStatus)
   return (
@@ -599,6 +621,7 @@ function ChangesDetail({ task, onBack }) {
         <div className="agent-actions">
           <StatusBadge status={task.status} />
           {task.branch && <span className="badge">{task.branch}</span>}
+          {revising && <button className="cancel" onClick={stopRevise}>■ Stop</button>}
           {ready && <button className="cancel" onClick={discard}>Discard</button>}
           {ready && <button className="approve-btn" disabled={pushing} onClick={push}>{pushing ? 'Pushing…' : '⬆ Push & Open PR'}</button>}
           {task.prUrl && <a className="dispatch" href={task.prUrl} target="_blank" rel="noreferrer">Open PR ↗</a>}
@@ -606,6 +629,42 @@ function ChangesDetail({ task, onBack }) {
       </div>
 
       {task.summary && <div className="review-summary">🤖 {task.summary}</div>}
+
+      {ready && (
+        <div className="ask">
+          <div className="ask-row">
+            <textarea className="ask-input" placeholder="Need more changes? Tell the agent — e.g. “also handle empty CSV rows / add a test” (⌘/Ctrl+Enter)"
+              value={reviseText} onChange={(e) => setReviseText(e.target.value)}
+              onKeyDown={(e) => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) revise() }} />
+            <button className="approve-btn" disabled={reviseSending || !reviseText.trim()} onClick={revise}>
+              {reviseSending ? 'Sending…' : '💬 Request changes'}
+            </button>
+          </div>
+        </div>
+      )}
+
+      {(revising || waiting) && (
+        <div className={`ask ${waiting ? 'ask-waiting' : ''}`}>
+          <div className="approve-row">
+            <span className="muted">{waiting ? '❓ The agent has a question — answer below.' : '✶ The agent is revising the changes…'}</span>
+          </div>
+          <div className="log revise-log" ref={logRef}>
+            {(task.events || []).slice(-100).map((e, i) => (
+              <div key={i} className={`log-line log-${e.kind}`}>
+                {e.kind === 'user' ? `🧑 ${e.text}` : e.kind === 'question' ? `❓ ${e.text}` : e.kind === 'answer' ? `↩︎ ${e.text}`
+                  : e.kind === 'result' ? `✅ ${e.text}` : e.kind === 'error' ? `⚠ ${e.text}` : e.kind === 'status' ? `▸ ${e.text}` : e.text}
+              </div>
+            ))}
+          </div>
+          {waiting && (
+            <div className="ask-row">
+              <textarea className="ask-input" placeholder="Answer the agent…" value={reply} autoFocus
+                onChange={(e) => setReply(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) sendAnswer() }} />
+              <button className="dispatch" disabled={!reply.trim()} onClick={sendAnswer}>Send ↵</button>
+            </div>
+          )}
+        </div>
+      )}
 
       <div className="preview">
         <div className="preview-bar">
