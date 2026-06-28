@@ -15,6 +15,9 @@ const USAGE_URL = 'https://api.anthropic.com/api/oauth/usage'
 const PROFILE_URL = 'https://api.anthropic.com/api/oauth/profile'
 const OAUTH_BETA = 'oauth-2025-04-20'
 
+// Cache the last successful result so a transient 429 doesn't blank the gauge.
+let lastGood = null
+
 async function readToken() {
   const raw = JSON.parse(await readFile(CREDS, 'utf8'))
   const oauth = raw.claudeAiOauth
@@ -31,6 +34,13 @@ async function call(url, token) {
     },
   })
   if (res.status === 401) throw new Error('login expired — run an agent or re-login to refresh the token')
+  if (res.status === 429) {
+    const ra = res.headers.get('retry-after')
+    const err = new Error('rate limited')
+    err.status = 429
+    err.retryAfter = ra ? Number(ra) : null
+    throw err
+  }
   if (!res.ok) throw new Error(`usage endpoint returned ${res.status}`)
   return res.json()
 }
@@ -50,7 +60,7 @@ export async function get() {
       call(USAGE_URL, accessToken),
       call(PROFILE_URL, accessToken).catch(() => null), // profile is a nicety, not required
     ])
-    return {
+    const result = {
       ok: true,
       plan: profile?.organization?.rate_limit_tier
         || (profile?.account?.has_claude_max ? 'claude_max' : profile?.account?.has_claude_pro ? 'claude_pro' : null),
@@ -62,7 +72,13 @@ export async function get() {
       },
       fetchedAt: Date.now(),
     }
+    lastGood = result
+    return result
   } catch (err) {
+    if (err.status === 429) {
+      if (lastGood) return { ...lastGood, stale: true, retryAfter: err.retryAfter }
+      return { ok: false, error: 'usage rate limited — try again shortly', retryAfter: err.retryAfter }
+    }
     return { ok: false, error: err.message }
   }
 }
