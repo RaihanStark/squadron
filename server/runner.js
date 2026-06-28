@@ -11,7 +11,9 @@ const sessions = new Map() // taskId -> ctx
 const PLAN_INSTRUCTIONS = `You are scoping a GitHub issue for an autonomous engineer who will implement it right after you. Investigate the codebase (read-only) and produce a clear, concrete implementation plan: the approach, the specific files/functions to change, and any tests to add. Keep it tight and skimmable — markdown, a handful of bullets. The operator reviews your plan in a chat and may ask for revisions; incorporate their feedback and restate the updated plan. Do NOT call ExitPlanMode — the operator approves and triggers execution separately.`
 
 function planFirstMessage(owner, repo, issue) {
-  return `You are scoping work in the repository ${owner}/${repo}. The repo is checked out in your working directory (read-only for now).
+  return `You are scoping work in the repository ${owner}/${repo}. The repo is checked out in your current working directory (read-only for now).
+
+IMPORTANT: Stay strictly inside your current working directory. Use relative paths only. Do NOT cd elsewhere, reference absolute paths to other locations, or search the wider filesystem — those attempts are blocked and waste turns. Everything you need is right here.
 
 Investigate the relevant code and propose a concrete implementation plan for this issue. Keep it tight and skimmable.
 
@@ -30,6 +32,7 @@ ${plan}
 --- END PLAN ---
 
 Guidelines:
+- Stay strictly inside your current working directory; use relative paths only. Do NOT cd elsewhere or touch other locations on the filesystem — those attempts are blocked.
 - Match the project's existing style and conventions.
 - If there's a test suite, run it; add or update tests where sensible.
 - Only call the \`ask_user\` tool if a wrong guess would be expensive or irreversible.

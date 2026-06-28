@@ -59,8 +59,10 @@ resuming where it left off once you answer.
 └──────────────────────────────────────────────┘
 ```
 
-- **Isolation:** every task runs on its own branch in its own git worktree, so multiple
-  agents never collide — even on the same repo.
+- **Isolation:** every task runs on its own branch in its own git worktree (under
+  `~/.squadron`, outside your projects), so multiple agents never collide — even on the
+  same repo. A `PreToolUse` guard **confines each agent to its worktree**: any attempt to
+  read, write, or `cd` outside it is blocked, even during autonomous execution.
 - **Auth:** agents use your existing Claude Code login; GitHub flows through `gh`. No
   tokens to manage.
 - **Desktop-ready:** the backend is structured to drop into an Electron main process

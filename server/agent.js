@@ -2,6 +2,7 @@
 // can start in plan mode and later switch to autonomous execution — all within
 // one context. Auth flows through the user's existing Claude Code login.
 import { z } from 'zod'
+import { makeConfineHook } from './confine.js'
 
 let _sdk
 async function sdk() {
@@ -73,6 +74,7 @@ export async function openSession({ cwd, model = 'opus', permissionMode = 'plan'
     options: {
       cwd, model, permissionMode, mcpServers,
       allowDangerouslySkipPermissions: true, // arm the capability so we can flip to execute later
+      hooks: makeConfineHook(cwd), // confine the agent to its worktree
       ...(planModeInstructions ? { planModeInstructions } : {}),
     },
   })
@@ -113,7 +115,10 @@ export async function runExecution({ prompt, cwd, model = 'opus', onEvent, signa
 
   const q = query({
     prompt,
-    options: { cwd, model, permissionMode: 'bypassPermissions', allowDangerouslySkipPermissions: true, mcpServers },
+    options: {
+      cwd, model, permissionMode: 'bypassPermissions', allowDangerouslySkipPermissions: true, mcpServers,
+      hooks: makeConfineHook(cwd), // confine the agent to its worktree
+    },
   })
   if (signal) signal.addEventListener('abort', () => { q.interrupt?.().catch(() => {}) }, { once: true })
 

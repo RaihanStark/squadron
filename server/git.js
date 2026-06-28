@@ -6,12 +6,13 @@
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 import { mkdir, access } from 'node:fs/promises'
-import { fileURLToPath } from 'node:url'
+import os from 'node:os'
 import path from 'node:path'
 
 const run = promisify(execFile)
-const __dirname = path.dirname(fileURLToPath(import.meta.url))
-export const DATA_DIR = path.join(__dirname, '..', 'data')
+// Live OUTSIDE the project tree, so an agent's worktree is never nested inside
+// (or adjacent to) Squadron's own source — part of keeping agents confined.
+export const DATA_DIR = path.join(os.homedir(), '.squadron')
 const REPOS_DIR = path.join(DATA_DIR, 'repos')
 const WORKTREES_DIR = path.join(DATA_DIR, 'worktrees')
 
