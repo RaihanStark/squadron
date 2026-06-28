@@ -8,7 +8,7 @@ import PrCard from './PrCard.jsx'
 import RepoErrand from './RepoErrand.jsx'
 import ReleasePanel from './ReleasePanel.jsx'
 
-export default function RepoView({ repo, tab, setTab, onDispatch, onReview, onOpenTask, onOpenPr, onOpenChanges, onOpenIssue, onStartErrand, tasks }) {
+export default function RepoView({ repo, tab, setTab, onDispatch, onReview, onOpenTask, onOpenPr, onOpenChanges, onOpenIssue, onStartErrand, onReleaseTask, tasks }) {
   const [owner, name] = repo.nameWithOwner.split('/')
   const [issues, setIssues] = useState(null)
   const [pulls, setPulls] = useState(null)
@@ -25,9 +25,12 @@ export default function RepoView({ repo, tab, setTab, onDispatch, onReview, onOp
   }, [repo.nameWithOwner])
 
   // Latest issue task (plan/execute) per issue, so the backlog shows live status.
+  // Review/resolve tasks are keyed by PR number, not issue number — exclude them
+  // so they never bind to a same-numbered backlog issue.
   const taskByIssue = {}
   for (const t of tasks) {
-    if (`${t.owner}/${t.repo}` === repo.nameWithOwner && (t.kind || 'plan') !== 'review') taskByIssue[t.issueNumber] = t
+    const kind = t.kind || 'plan'
+    if (`${t.owner}/${t.repo}` === repo.nameWithOwner && kind !== 'review' && kind !== 'resolve') taskByIssue[t.issueNumber] = t
   }
 
   // "Ready to Review" = local agent changes staged in a worktree — kept here
@@ -91,7 +94,7 @@ export default function RepoView({ repo, tab, setTab, onDispatch, onReview, onOp
               : <div className="muted pad">No open PRs.</div>
         )}
 
-        {tab === 'release' && <ReleasePanel repo={repo} />}
+        {tab === 'release' && <ReleasePanel repo={repo} onReleaseTask={onReleaseTask} />}
       </div>
       {errandOpen && <RepoErrand repo={repo} tasks={tasks} onStart={onStartErrand} onOpenChanges={onOpenChanges} />}
       </div>

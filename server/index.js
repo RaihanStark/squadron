@@ -147,10 +147,21 @@ app.get('/api/repos/:owner/:repo/releases', handle((req) =>
   github.listReleases(req.params.owner, req.params.repo)))
 
 app.post('/api/repos/:owner/:repo/releases', handle(async (req) => {
-  const { tag, target, title, notes, generateNotes, prerelease } = req.body || {}
+  const { owner, repo } = req.params
+  const { tag, target, title, notes, generateNotes, prerelease, bumpVersion, model, defaultBranch } = req.body || {}
   const t = (tag || '').trim()
   if (!t) throw new Error('tag is required')
-  const url = await github.createRelease(req.params.owner, req.params.repo, {
+  // Bumping the version uses the AI agent (find + edit version manifests, push to
+  // the target branch, then tag), so it runs as a tracked task streamed over
+  // /api/stream rather than a single synchronous gh call.
+  if (bumpVersion) {
+    const task = await createTask({ owner, repo, issueNumber: null, issueTitle: `Release ${t}`, kind: 'release', model })
+    runner.startRelease(task, {
+      tag: t, target, title, notes, generateNotes, prerelease, bumpVersion: true, defaultBranch,
+    }).catch((e) => console.error('startRelease crashed', e))
+    return task
+  }
+  const url = await github.createRelease(owner, repo, {
     tag: t,
     target: (target || '').trim() || undefined,
     title: (title || '').trim() || undefined,
@@ -200,6 +211,20 @@ app.post('/api/repos/:owner/:repo/pulls/:number/fix-ci', handle(async (req) => {
   if (existing) return { ...existing, deduped: true }
   const task = await createTask({ owner, repo, issueNumber: Number(number), issueTitle: prTitle, model, kind: 'fix' })
   runner.startCiFix(task).catch((e) => console.error('startCiFix crashed', e))
+  return task
+}))
+
+// Start an AI merge-conflict resolution for a PR. Merges base into the head in
+// an isolated worktree, has the agent resolve the conflicts, then waits for
+// operator review before pushing back to the PR's branch. Streams over /api/stream.
+app.post('/api/repos/:owner/:repo/resolve', handle(async (req) => {
+  const { owner, repo } = req.params
+  const { prNumber, prTitle, model } = req.body
+  if (!prNumber) throw new Error('prNumber is required')
+  const existing = await findActiveByIssue(owner, repo, prNumber, 'resolve')
+  if (existing) return { ...existing, deduped: true }
+  const task = await createTask({ owner, repo, issueNumber: prNumber, issueTitle: prTitle, model, kind: 'resolve' })
+  runner.startResolve(task).catch((e) => console.error('startResolve crashed', e))
   return task
 }))
 

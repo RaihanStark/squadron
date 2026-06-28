@@ -171,6 +171,87 @@ export async function startErrand(task, { instruction, defaultBranch } = {}) {
   }
 }
 
+// --- Release phase ---
+//
+// Cut a tagged release, optionally bumping the repo's version first with the AI.
+// A plain `gh release create` tags the source as-is, so the built artifact keeps
+// the old version. Here we (optionally) run the agent to update every version
+// manifest on the target branch, push the bump, THEN create the release so the
+// tag — and the build it triggers — carries the right version.
+function releaseBumpMessage(owner, repo, version, tag, tree) {
+  return `You are an autonomous engineer preparing to cut release ${tag} of ${owner}/${repo}. The repo is checked out in a fresh git worktree at your working directory.
+
+Your ONLY task: update this project's version to ${version} so the released build reports the right version. Find every version manifest the repo actually uses and set its version to ${version}.
+
+Likely places — only touch the ones that exist: package.json (and nested ones like web/package.json), Cargo.toml, pyproject.toml / setup.py, version.py / __version__, build.gradle, *.csproj, etc. If a lockfile carries this package's own top-level version, update that field too, but do NOT run installers or regenerate lockfiles.
+
+Guidelines:
+- Make ONLY the version change — do not edit changelogs, source code, or anything unrelated.
+- You are already at the repo root. Use relative paths only; never cd elsewhere or touch other locations — those attempts are blocked.
+- Work in parallel: batch independent reads/greps into one step.
+- Do NOT commit, push, tag, or create a release — the harness handles all git and the GitHub release.
+- End with a 1-2 sentence summary listing exactly which files you changed.
+
+--- FILE TREE (${tree.total} files${tree.shown < tree.total ? `, first ${tree.shown}` : ''}) ---
+${tree.list}
+--- END FILE TREE ---`
+}
+
+export async function startRelease(task, { tag, target, title, notes, generateNotes, prerelease, bumpVersion, defaultBranch } = {}) {
+  const { id, owner, repo, model } = task
+  const branchTarget = (target && target.trim()) || defaultBranch || 'main'
+  const version = gh.parseVersion(tag)
+  const ac = new AbortController()
+  try {
+    await updateTask(id, { status: 'preparing' })
+    addEvent(id, { kind: 'status', text: 'Preparing isolated worktree…' })
+    const { path: wt } = await git.createWorktree(owner, repo, id, branchTarget)
+    sessions.set(id, { id, owner, repo, wt, ac, kind: 'release' })
+
+    if (bumpVersion && !version) {
+      addEvent(id, { kind: 'status', text: `Tag "${tag}" isn't a plain vX.Y.Z — skipping the automatic version bump.` })
+    } else if (bumpVersion) {
+      await updateTask(id, { status: 'running' })
+      addEvent(id, { kind: 'status', text: `Bumping version to ${version} on ${branchTarget}…` })
+      const tree = await git.trackedFiles(wt).catch(() => ({ total: 0, shown: 0, list: '(unavailable)' }))
+      await runExecution({
+        prompt: releaseBumpMessage(owner, repo, version, tag, tree),
+        cwd: wt, model, signal: ac.signal,
+        onEvent: (e) => e.kind === 'delta' ? streamText(id, e.text) : addEvent(id, e),
+      })
+      if (ac.signal.aborted) return // cancel() handles cleanup
+
+      addEvent(id, { kind: 'status', text: 'Committing version bump…' })
+      await updateTask(id, { status: 'committing' })
+      const committed = await git.commitAll(wt, `Release ${tag}: bump version to ${version}`)
+      if (committed) {
+        addEvent(id, { kind: 'status', text: `Pushing version bump to ${branchTarget}…` })
+        await updateTask(id, { status: 'pushing' })
+        await git.pushToBranch(wt, branchTarget)
+      } else {
+        addEvent(id, { kind: 'status', text: 'Version manifests already up to date — nothing to bump.' })
+      }
+    }
+
+    addEvent(id, { kind: 'status', text: `Cutting release ${tag}…` })
+    await updateTask(id, { status: 'releasing' })
+    const url = await gh.createRelease(owner, repo, {
+      tag, target: branchTarget, title: (title || '').trim() || undefined,
+      notes: (notes || '').trim() || undefined, generateNotes: !!generateNotes, prerelease: !!prerelease,
+    })
+    await updateTask(id, { status: 'released', prUrl: url })
+    addEvent(id, { kind: 'result', ok: true, text: `Release ${tag} published → ${url}` })
+    await git.removeWorktree(owner, repo, id)
+    sessions.delete(id)
+  } catch (err) {
+    console.error(`[release ${id}]`, err)
+    addEvent(id, { kind: 'error', text: err.message })
+    await updateTask(id, { status: 'error', error: err.message })
+    await git.removeWorktree(owner, repo, id).catch(() => {})
+    sessions.delete(id)
+  }
+}
+
 // Errand messages from the interactive session. Mirrors execution's mapping, but
 // on a finished turn we go IDLE (keeping the session warm) instead of finalizing —
 // the operator drives staging explicitly.
@@ -465,6 +546,26 @@ export async function pushTask(taskId) {
   }
 
   const { owner, repo, branch, base, issueNumber } = task
+
+  // Resolve tasks push the completed merge back to the PR's own head branch and
+  // reuse the existing PR — no new branch or PR is opened.
+  if (task.kind === 'resolve') {
+    try {
+      addEvent(taskId, { kind: 'status', text: `Pushing resolution to ${task.headRef}…` })
+      await updateTask(taskId, { status: 'pushing' })
+      await git.pushHead(git.worktreePathFor(taskId), task.headRef)
+      await updateTask(taskId, { status: 'pr_open', prUrl: task.prUrl })
+      addEvent(taskId, { kind: 'result', text: `Resolution pushed → ${task.prUrl}`, ok: true })
+      preview.stop(taskId)
+      await git.removeWorktree(owner, repo, taskId)
+      return true
+    } catch (err) {
+      addEvent(taskId, { kind: 'error', text: err.message })
+      await updateTask(taskId, { status: 'error', error: err.message })
+      return false
+    }
+  }
+
   try {
     addEvent(taskId, { kind: 'status', text: 'Pushing branch to origin…' })
     await updateTask(taskId, { status: 'pushing' })
@@ -769,6 +870,102 @@ export async function startCiFix(task) {
     sessions.delete(id) // keep the worktree on disk for the diff + later push
   } catch (err) {
     console.error(`[ci-fix ${id}]`, err)
+    addEvent(id, { kind: 'error', text: err.message })
+    await updateTask(id, { status: 'error', error: err.message })
+    await git.removeWorktree(owner, repo, id).catch(() => {})
+    sessions.delete(id)
+  }
+}
+
+// --- Resolve: AI merges base into the PR head and fixes the conflicts ---
+
+function resolvePrompt(owner, repo, pr, conflicts) {
+  return `You are resolving merge conflicts on pull request #${pr.number} ("${pr.title}") in ${owner}/${repo}. The PR's head branch ("${pr.headRefName}") is checked out in your working directory, and its base branch ("${pr.baseRefName}") has just been merged into it — leaving git conflict markers in the files below.
+
+--- CONFLICTED FILES ---
+${conflicts.map((f) => `- ${f}`).join('\n')}
+--- END CONFLICTED FILES ---
+
+Your job: open each conflicted file and resolve EVERY conflict region (the \`<<<<<<<\` / \`=======\` / \`>>>>>>>\` blocks), preserving the intent of BOTH sides — the PR's changes AND the base branch's changes. Remove all conflict markers. When the resolution is ambiguous, read the surrounding code for context and choose the result that keeps the program correct and coherent; do not simply discard one side.
+
+Guidelines:
+- You are already at the repo root. Use relative paths only; never cd elsewhere or touch other locations — those attempts are blocked and waste turns.
+- Work in parallel: when reading several files, issue those reads together in one step.
+- Resolve the conflicts ONLY. Do not make unrelated changes.
+- Do NOT run git (no add/commit/merge/push) and do NOT open a PR — the harness completes the merge commit and pushes. Just leave the resolved files saved in the working tree.
+- If a wrong guess would be expensive or irreversible, use the \`ask_user\` tool.
+- End with a 2-4 sentence summary of how you resolved the conflicts.`
+}
+
+export async function startResolve(task) {
+  const { id, owner, repo, issueNumber: prNumber, model } = task
+  try {
+    await updateTask(id, { status: 'preparing' })
+    addEvent(id, { kind: 'status', text: `Fetching PR #${prNumber}…` })
+    const pr = await gh.getPr(owner, repo, prNumber)
+
+    // Gate: only conflicting, same-repo PRs can be resolved (we need push access
+    // to the head branch, which we don't have on a fork).
+    if (pr.mergeable !== 'CONFLICTING') {
+      addEvent(id, { kind: 'error', text: 'This PR has no merge conflicts to resolve.' })
+      await updateTask(id, { status: 'error', error: 'No merge conflicts to resolve.' })
+      return
+    }
+    if (pr.isCrossRepository) {
+      addEvent(id, { kind: 'error', text: "Can't resolve conflicts on a fork PR — push access to its branch is required." })
+      await updateTask(id, { status: 'error', error: 'Cannot resolve conflicts on a fork PR.' })
+      return
+    }
+
+    addEvent(id, { kind: 'status', text: `Merging ${pr.baseRefName} into ${pr.headRefName}…` })
+    const { path: wt, conflicts } = await git.createMergeWorktree(owner, repo, id, pr.headRefName, pr.baseRefName)
+    await updateTask(id, { branch: pr.headRefName, base: pr.baseRefName, headRef: pr.headRefName, prUrl: pr.url })
+
+    if (!conflicts.length) {
+      addEvent(id, { kind: 'status', text: 'Merge produced no conflicts — nothing to resolve.' })
+      await updateTask(id, { status: 'no_changes' })
+      await git.removeWorktree(owner, repo, id)
+      return
+    }
+
+    await updateTask(id, { status: 'running' })
+    addEvent(id, { kind: 'status', text: `Resolving ${conflicts.length} conflicted file(s)…` })
+
+    const ac = new AbortController()
+    sessions.set(id, { id, owner, repo, kind: 'resolve', wt, branch: pr.headRefName, base: pr.baseRefName, ac })
+
+    const res = await runExecution({
+      prompt: resolvePrompt(owner, repo, pr, conflicts),
+      cwd: wt, model, signal: ac.signal,
+      onEvent: (e) => e.kind === 'delta' ? streamText(id, e.text) : addEvent(id, e),
+      askUser: askUserFor(id),
+    })
+
+    if (ac.signal.aborted) {
+      addEvent(id, { kind: 'status', text: 'Resolution stopped — discarding the merge worktree.' })
+      await updateTask(id, { status: 'cancelled' })
+      await git.removeWorktree(owner, repo, id)
+      sessions.delete(id)
+      return
+    }
+
+    // Guard: refuse to commit while conflict markers remain in the tree.
+    if (await git.mergeHasConflictMarkers(wt)) {
+      addEvent(id, { kind: 'error', text: 'Unresolved conflict markers remain — not committing. Review the worktree or retry.' })
+      await updateTask(id, { status: 'error', error: 'Unresolved conflicts remain.' })
+      await git.removeWorktree(owner, repo, id)
+      sessions.delete(id)
+      return
+    }
+
+    addEvent(id, { kind: 'status', text: 'Committing the merge locally…' })
+    await updateTask(id, { status: 'committing', summary: res.summary, costUsd: res.costUsd })
+    await git.commitMerge(wt)
+    await updateTask(id, { status: 'changes_ready', staged: true })
+    addEvent(id, { kind: 'result', text: 'Conflicts resolved (local — not pushed). Review the diff, then push to update the PR.', ok: true })
+    sessions.delete(id) // keep the worktree on disk for the diff + later push
+  } catch (err) {
+    console.error(`[resolve ${id}]`, err)
     addEvent(id, { kind: 'error', text: err.message })
     await updateTask(id, { status: 'error', error: err.message })
     await git.removeWorktree(owner, repo, id).catch(() => {})

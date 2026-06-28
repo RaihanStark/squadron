@@ -1,7 +1,9 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { api, DEMO, PARAMS } from './api.js'
 import { ACTIVE, NEEDS_YOU } from './constants.js'
 import { usePref, getPref, setPref } from './prefs.js'
+import { requestNotifyPermission, notifyTransition } from './notify.js'
+import NotifSettings from './components/NotifSettings.jsx'
 import Sidebar from './components/Sidebar.jsx'
 import RepoView from './components/RepoView.jsx'
 import AgentsPanel from './components/AgentsPanel.jsx'
@@ -23,6 +25,9 @@ export default function App() {
   // Tasks keyed by id, kept live via SSE.
   const [tasks, setTasks] = useState({})
   const [selectedTask, setSelectedTask] = useState(DEMO ? 'twait' : null)
+  // Last-seen status per task, so we can fire a desktop notification only on a
+  // genuine live transition (seeded on load/re-sync to avoid a startup burst).
+  const lastStatus = useRef({})
 
   // Fetch the curated fleet, sort by recency, and reconcile the active repo.
   const loadRepos = () =>
@@ -45,6 +50,9 @@ export default function App() {
     // Full re-sync from the server (events are persisted). Keep whichever event
     // list is longer so a re-sync never regresses live deltas we already hold.
     const fetchTasks = () => api('/api/tasks').then((list) => {
+      // Seed last-seen statuses so neither initial load nor an SSE reconnect
+      // re-sync (which has no replay) fires a flood of notifications.
+      for (const t of list) lastStatus.current[t.id] = t.status
       setTasks((prev) => {
         const next = { ...prev }
         for (const t of list) {
@@ -60,12 +68,28 @@ export default function App() {
 
     if (DEMO) return // no live stream in demo mode
 
+    requestNotifyPermission()
+
+    // Deep-link a clicked desktop notification back to the relevant view.
+    const navigate = (task) => {
+      if (task.status === 'changes_ready') { setSelectedChange(task.id); setView('changes') }
+      else { setSelectedTask(task.id); setView('agents') }
+    }
+
     const es = new EventSource('/api/stream')
     // Re-sync on every (re)connect so events emitted during a drop (e.g. a
     // server restart) aren't lost — SSE itself has no replay.
     es.onopen = () => fetchTasks()
     es.onmessage = (ev) => {
       const payload = JSON.parse(ev.data)
+      // Notify on real status transitions only (skip first sight / unchanged).
+      if (payload.type === 'task') {
+        const prevStatus = lastStatus.current[payload.id]
+        lastStatus.current[payload.id] = payload.task.status
+        if (prevStatus !== undefined && prevStatus !== payload.task.status) {
+          notifyTransition(payload.task, { onClick: navigate })
+        }
+      }
       setTasks((prev) => {
         const cur = prev[payload.id] || { id: payload.id, events: [] }
         if (payload.type === 'task') return { ...prev, [payload.id]: { ...cur, ...payload.task, events: cur.events || [] } }
@@ -136,6 +160,19 @@ export default function App() {
     } catch (e) { alert('Fix CI failed: ' + e.message) }
   }
 
+  async function resolveConflicts(repoObj, pr, model) {
+    const [owner, repo] = repoObj.nameWithOwner.split('/')
+    try {
+      const task = await api(`/api/repos/${owner}/${repo}/resolve`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ prNumber: pr.number, prTitle: pr.title, model }),
+      })
+      setTasks((prev) => ({ ...prev, [task.id]: { ...(prev[task.id] || {}), ...task, events: prev[task.id]?.events || [] } }))
+      setSelectedTask(task.id)
+      setView('agents')
+    } catch (e) { alert('Resolve failed: ' + e.message) }
+  }
+
   // Plan-less "quick task": create an errand and surface it in the repo sidebar.
   async function startErrand(repoObj, instruction) {
     const [owner, repo] = repoObj.nameWithOwner.split('/')
@@ -145,6 +182,14 @@ export default function App() {
     })
     setTasks((prev) => ({ ...prev, [task.id]: { ...(prev[task.id] || {}), ...task, events: prev[task.id]?.events || [] } }))
     return task
+  }
+
+  // A release that bumps the version runs as an agent task — register it and jump
+  // to the Agents view so the operator can watch the bump → push → tag.
+  function onReleaseTask(task) {
+    setTasks((prev) => ({ ...prev, [task.id]: { ...(prev[task.id] || {}), ...task, events: prev[task.id]?.events || [] } }))
+    setSelectedTask(task.id)
+    setView('agents')
   }
 
   const openTask = (taskId) => { setSelectedTask(taskId); setView('agents') }
@@ -187,6 +232,7 @@ export default function App() {
         >
           ⚡ Agents{activeCount ? ` · ${activeCount} active` : ''}{waitingCount ? ` · ${waitingCount} needs you` : ''}
         </button>
+        <NotifSettings />
       </header>
 
       <div className="body">
@@ -207,10 +253,11 @@ export default function App() {
             <PrDetail repo={selectedPr.repo} pr={selectedPr.pr}
               task={findTask((t) => `${t.owner}/${t.repo}` === selectedPr.repo.nameWithOwner && t.issueNumber === selectedPr.pr.number && (t.kind || 'plan') === 'review')}
               fixTask={findTask((t) => `${t.owner}/${t.repo}` === selectedPr.repo.nameWithOwner && t.issueNumber === selectedPr.pr.number && t.kind === 'fix')}
-              onReview={review} onFixCi={fixCi} onBack={backToRepo} />
+              resolveTask={findTask((t) => `${t.owner}/${t.repo}` === selectedPr.repo.nameWithOwner && t.issueNumber === selectedPr.pr.number && t.kind === 'resolve')}
+              onReview={review} onFixCi={fixCi} onResolve={resolveConflicts} onOpenChanges={openChanges} onBack={backToRepo} />
           ) : activeRepo ? (
             <RepoView key={active} repo={activeRepo} tab={tab} setTab={setTab} onDispatch={dispatch} onReview={review}
-              onOpenTask={openTask} onOpenPr={openPr} onOpenChanges={openChanges} onOpenIssue={openIssue} onStartErrand={startErrand} tasks={taskList} />
+              onOpenTask={openTask} onOpenPr={openPr} onOpenChanges={openChanges} onOpenIssue={openIssue} onStartErrand={startErrand} onReleaseTask={onReleaseTask} tasks={taskList} />
           ) : (
             <div className="empty">{repos.length ? 'Select a repo to begin.' : 'Add a repo from the sidebar to begin.'}</div>
           )}

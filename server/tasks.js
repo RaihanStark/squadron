@@ -17,7 +17,7 @@ bus.setMaxListeners(0)
 // its plan is captured, so it can still be approved after a restart.
 const NEEDS_SESSION = new Set([
   'queued', 'preparing', 'planning', 'running', 'errand_idle', 'waiting', 'committing', 'pushing', 'opening_pr',
-  'reviewing', 'posting',
+  'reviewing', 'posting', 'releasing',
 ])
 
 let loaded = false
@@ -92,7 +92,7 @@ export async function createTask({ owner, repo, issueNumber, issueTitle, model, 
   const id = randomUUID().slice(0, 8)
   const task = {
     id, owner, repo, kind, issueNumber, issueTitle, local, body, model: model || 'opus',
-    status: 'queued', branch: null, base: null, prUrl: null, sessionId: null,
+    status: 'queued', branch: null, base: null, headRef: null, prUrl: null, sessionId: null,
     plan: null, review: null, findings: null, question: null, summary: null, error: null, costUsd: null, staged: false,
     createdAt: Date.now(), events: [],
   }

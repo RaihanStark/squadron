@@ -376,6 +376,27 @@ body {
 }
 .topbar .agents-toggle.on { border-color: var(--accent); color: var(--accent); }
 
+/* Desktop-notification settings popover, pinned to the top-right of the header. */
+.notif-settings { position: relative; align-self: center; }
+.notif-btn {
+  background: var(--panel-2); color: var(--text); border: 1px solid var(--border);
+  border-radius: 6px; cursor: pointer; font-size: 14px; line-height: 1; padding: 6px 8px;
+}
+.notif-popover {
+  position: absolute; right: 0; top: calc(100% + 6px); z-index: 20; width: 220px;
+  background: var(--panel); border: 1px solid var(--border); border-radius: 8px;
+  padding: 10px; box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+}
+.notif-head {
+  color: var(--muted); font-size: 11px; letter-spacing: 1px; text-transform: uppercase;
+  padding-bottom: 8px;
+}
+.notif-row {
+  display: flex; align-items: center; gap: 8px; padding: 4px 0;
+  font-size: 13px; cursor: pointer;
+}
+.notif-row input { cursor: pointer; }
+
 .dot {
   display: inline-block; width: 7px; height: 7px; border-radius: 50%;
   background: var(--green); box-shadow: 0 0 6px var(--green); margin-left: 4px;
@@ -388,9 +409,9 @@ body {
   background: var(--panel-2); color: var(--muted); border: 1px solid var(--border);
 }
 .status-running, .status-preparing, .status-queued, .status-planning, .status-committing,
-.status-pushing, .status-opening_pr, .status-reviewing, .status-posting { color: var(--accent); border-color: var(--accent-dim); }
+.status-pushing, .status-opening_pr, .status-reviewing, .status-posting, .status-releasing { color: var(--accent); border-color: var(--accent-dim); }
 .status-waiting, .status-planned, .status-reviewed, .status-changes_ready { color: #1a1200; background: var(--accent); border-color: var(--accent); font-weight: 600; }
-.status-pr_open, .status-review_posted { color: var(--green); border-color: #1f6f33; }
+.status-pr_open, .status-review_posted, .status-released { color: var(--green); border-color: #1f6f33; }
 .status-error, .status-interrupted { color: var(--red); border-color: #6e2420; }
 .status-cancelled, .status-no_changes { color: var(--muted); }
 

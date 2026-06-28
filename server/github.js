@@ -103,7 +103,7 @@ export function getPr(owner, repo, number) {
   return gh([
     'pr', 'view', String(number),
     '--repo', `${owner}/${repo}`,
-    '--json', 'number,title,body,headRefName,baseRefName,url,additions,deletions,isDraft,mergeable,mergeStateStatus,statusCheckRollup',
+    '--json', 'number,title,body,headRefName,baseRefName,url,additions,deletions,isDraft,mergeable,mergeStateStatus,statusCheckRollup,isCrossRepository,headRepositoryOwner',
   ])
 }
 
@@ -149,6 +149,14 @@ export async function postPrReview(owner, repo, number, payload) {
   )
   const res = JSON.parse(out)
   return res.html_url || ''
+}
+
+// Extract the bare semver from a release tag (strips a leading `v`). Returns null
+// for anything that isn't a plain X.Y.Z — pre-release suffixes etc. are left for
+// the human, mirroring ReleasePanel.suggestNext on the client.
+export function parseVersion(tag) {
+  const m = String(tag || '').trim().match(/^v?(\d+\.\d+\.\d+)$/)
+  return m ? m[1] : null
 }
 
 // Recent releases for a repo — powers the Release tab + next-version suggestion.
