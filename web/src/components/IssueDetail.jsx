@@ -1,13 +1,13 @@
 import { useEffect, useState } from 'react'
 import { api } from '../api.js'
 import { ACTIVE } from '../constants.js'
-import { defaultAgentId } from '../agents.js'
+import { assignmentOpts } from '../agents.js'
 import AgentPicker from './AgentPicker.jsx'
 
 export default function IssueDetail({ repo, issue, me, task, agents = [], onDispatch, onOpenTask, onBack }) {
   const [owner, name] = repo.nameWithOwner.split('/')
   const [model, setModel] = useState('opus')
-  const [assignTo, setAssignTo] = useState('') // agentId to scope this issue, or '' for a new agent
+  const [assignTo, setAssignTo] = useState('auto') // 'auto' (General) | 'new' | agentId
   const [full, setFull] = useState(issue.local ? issue : null)
   const [error, setError] = useState(null)
   const [acting, setActing] = useState(false)
@@ -19,7 +19,7 @@ export default function IssueDetail({ repo, issue, me, task, agents = [], onDisp
   useEffect(() => {
     setEditing(false)
     setConfirmingDelete(false)
-    setAssignTo(defaultAgentId(agents, repo.nameWithOwner)) // default to whoever knows this repo
+    setAssignTo('auto') // default to letting the General auto-assign
     if (issue.local) { setFull(issue); return }
     setFull(null); setError(null)
     api(`/api/repos/${owner}/${name}/issues/${issue.number}`).then(setFull).catch((e) => setError(e.message))
@@ -102,7 +102,7 @@ export default function IssueDetail({ repo, issue, me, task, agents = [], onDisp
                   <select className="model-select" value={model} onChange={(e) => setModel(e.target.value)} title="Model">
                     <option value="opus">Opus</option><option value="sonnet">Sonnet</option><option value="haiku">Haiku</option>
                   </select>
-                  <button className="approve-btn" onClick={() => onDispatch(repo, issue, model, { agentId: assignTo || undefined, fresh: !assignTo })}>📋 Plan</button>
+                  <button className="approve-btn" onClick={() => onDispatch(repo, issue, model, assignmentOpts(assignTo))}>📋 Plan</button>
                 </>
               )}
             </>

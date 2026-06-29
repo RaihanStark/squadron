@@ -207,6 +207,60 @@ function parseChangeName(text) {
   }
 }
 
+// Pull a { agentId, reason } object out of the General's reply.
+function parseChoice(text) {
+  const raw = String(text || '')
+  const fence = raw.match(/```(?:json)?\s*([\s\S]*?)```/i)
+  const body = fence ? fence[1] : raw.match(/\{[\s\S]*\}/)?.[0]
+  if (!body) return null
+  try {
+    const p = JSON.parse(body.trim())
+    const agentId = typeof p.agentId === 'string' && p.agentId.trim() ? p.agentId.trim() : null
+    const reason = (p.reason ? String(p.reason).trim() : '').slice(0, 200) || null
+    return { agentId, reason }
+  } catch {
+    return null
+  }
+}
+
+// The GENERAL: a cheap, tool-less orchestrator that routes a task to the best
+// available agent — one who already knows the codebase or did related work, so
+// it reuses its context (saving tokens and ramp-up) — or to a fresh agent when
+// none fits. Returns { agentId|null, reason } or null on failure (→ caller falls
+// back to its own heuristic).
+export async function chooseAgent({ instruction, repo, candidates, model = 'haiku' }) {
+  if (!candidates?.length) return { agentId: null, reason: null }
+  const list = candidates.map((c, i) =>
+    `${i + 1}. id=${c.agentId} · callsign=${c.name} · knowsThisRepo=${c.knowsRepo ? 'yes' : 'no'} · recentWork=${(c.focus || []).join(' | ') || '(unknown)'}`,
+  ).join('\n')
+  const prompt = `You are the GENERAL, orchestrating a fleet of autonomous coding agents. A new task has arrived. Pick the BEST existing agent to handle it — one who already knows this codebase or did closely related work, so they reuse their context instead of cold-starting. If none is a genuinely good fit, start a fresh agent.
+
+REPO: ${repo}
+TASK: ${String(instruction || '(no description)').slice(0, 1500)}
+
+AVAILABLE AGENTS:
+${list}
+
+Prefer an agent with knowsThisRepo=yes and related recentWork. Only pick one if it truly helps; otherwise choose none (a fresh agent is better than forcing an unrelated one).
+
+Reply with EXACTLY ONE fenced \`\`\`json code block and nothing else:
+{ "agentId": "<id from the list, or null>", "reason": "<one short sentence>" }`
+
+  try {
+    const { query } = await sdk()
+    const q = query({ prompt, options: { model, permissionMode: 'bypassPermissions', allowedTools: [], disallowedTools: [] } })
+    let out = ''
+    for await (const msg of q) {
+      if (msg.type === 'assistant') {
+        for (const b of msg.message?.content ?? []) if (b.type === 'text' && b.text?.trim()) out = b.text.trim()
+      } else if (msg.type === 'result' && msg.result) out = msg.result
+    }
+    return parseChoice(out)
+  } catch {
+    return null
+  }
+}
+
 // Summarize a diff into a concise PR title + commit message. A cheap, tool-less
 // one-shot — used to name a quick task's changes by what actually changed rather
 // than the raw instruction. Returns { title, commit } or null on any failure so

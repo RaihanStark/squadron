@@ -1,18 +1,18 @@
 import { timeAgo } from '../constants.js'
 
-// Pick who works a task: a new agent (clean slate) or an existing person, who
-// resumes the context they already built — saving the re-exploration tokens.
-// Renders nothing when there's nobody to assign yet. `value` is an agentId or ''.
+// Who works a task. By default the GENERAL auto-routes it to the best agent
+// (reusing context to save tokens); you can override to pin a specific person or
+// force a fresh agent. `value` is 'auto' | 'new' | '<agentId>'.
 export default function AgentPicker({ agents, repo, value, onChange }) {
   const assignable = agents.filter((a) => a.assignable)
-  if (!assignable.length) return null
   // Surface the people who already know this repo first.
   const sorted = [...assignable].sort((a, b) => (b.repos.includes(repo) ? 1 : 0) - (a.repos.includes(repo) ? 1 : 0))
   return (
-    <label className="agent-picker" title="Assign a person to this task. An existing agent resumes the context it already built (saves tokens); a new one starts clean.">
-      <span className="muted">Assign</span>
+    <label className="agent-picker" title="The General auto-assigns the best agent for this task — continuing one whose context fits (saves tokens) or starting fresh. Override to pin a specific person or force a new agent.">
+      <span className="muted">Agent</span>
       <select className="model-select" value={value} onChange={(e) => onChange(e.target.value)}>
-        <option value="">🆕 New agent</option>
+        <option value="auto">🎖 General — auto-assign</option>
+        <option value="new">🆕 New agent</option>
         {sorted.map((a) => (
           <option key={a.agentId} value={a.agentId}>
             🎖 {a.name}{a.repos.includes(repo) ? ' · knows this repo' : ''} · {timeAgo(a.lastActiveAt)}

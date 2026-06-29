@@ -180,6 +180,25 @@ export async function listAgents() {
   return [...byId.values()].map((a) => ({ ...a, repos: [...a.repos] })).sort((x, y) => y.lastActiveAt - x.lastActiveAt)
 }
 
+// The agents the General may route a task to: assignable (dormant healthy
+// session), within the freshness window, each with a short "focus" — the titles
+// of its recent tasks — so the General can judge relatedness.
+export async function resumableCandidates(owner, repo, now = Date.now()) {
+  await load()
+  const agents = await listAgents()
+  const out = []
+  for (const a of agents) {
+    if (!a.assignable || now - a.lastActiveAt > RESUME_MAX_AGE_MS) continue
+    const focus = [...tasks.values()]
+      .filter((t) => t.agentId === a.agentId && t.issueTitle)
+      .sort((x, y) => (y.createdAt || 0) - (x.createdAt || 0))
+      .slice(0, 3)
+      .map((t) => t.issueTitle)
+    out.push({ agentId: a.agentId, name: a.name, knowsRepo: a.repos.includes(`${owner}/${repo}`), lastActiveAt: a.lastActiveAt, focus })
+  }
+  return out
+}
+
 export async function createTask({ owner, repo, issueNumber, issueTitle, model, kind = 'plan', local = false, body = null, agentId = null, agentName = null }) {
   await load()
   const id = randomUUID().slice(0, 8)

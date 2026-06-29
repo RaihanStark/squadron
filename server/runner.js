@@ -3,11 +3,27 @@
 import * as git from './git.js'
 import * as gh from './github.js'
 import * as questions from './questions.js'
-import { openSession, runExecution, describeTool, generateChangeName, textDelta } from './agent.js'
-import { updateTask, addEvent, getTask, streamText, deleteTask, listTasks } from './tasks.js'
+import { openSession, runExecution, describeTool, generateChangeName, textDelta, chooseAgent } from './agent.js'
+import { updateTask, addEvent, getTask, streamText, deleteTask, listTasks, resumableCandidates, findResumableAgent } from './tasks.js'
 import * as preview from './preview.js'
 
 const sessions = new Map() // taskId -> ctx
+
+// The GENERAL routes a task to the best agent. Returns { agentId, reason }:
+// an existing agent to continue (reusing its context), or agentId=null to spin
+// up a fresh one. Falls back to a recency heuristic if the General is unavailable.
+export async function chooseAssignment({ owner, repo, instruction }) {
+  const candidates = await resumableCandidates(owner, repo)
+  if (!candidates.length) return { agentId: null, reason: null }
+  const decision = await chooseAgent({ instruction, repo: `${owner}/${repo}`, candidates })
+  if (decision) {
+    const valid = decision.agentId && candidates.some((c) => c.agentId === decision.agentId)
+    return { agentId: valid ? decision.agentId : null, reason: decision.reason }
+  }
+  // General unavailable → continue whoever last worked this repo, if anyone.
+  const warm = await findResumableAgent(owner, repo)
+  return { agentId: warm?.agentId || null, reason: warm?.agentId ? 'recency fallback' : null }
+}
 
 // The ask_user handler for a task: surfaces the question to the operator and
 // blocks until they answer. Shared by execution, revision, and the reused

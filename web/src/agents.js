@@ -19,9 +19,12 @@ export function rosterFromTasks(tasks) {
     .sort((x, y) => y.lastActiveAt - x.lastActiveAt)
 }
 
-// The agent to assign by default for a repo: the most recently active assignable
-// person who already knows it (seamless continue). '' → start a new agent.
-export function defaultAgentId(agents, repoNwo) {
-  const known = agents.find((a) => a.assignable && a.repos.includes(repoNwo))
-  return known ? known.agentId : ''
+// Map an AgentPicker value to the dispatch options:
+//   'auto'      → {} (let the General route it — the default)
+//   'new'       → { fresh: true } (force a clean agent)
+//   '<agentId>' → { agentId } (pin a specific person)
+export function assignmentOpts(value) {
+  if (value === 'new') return { fresh: true }
+  if (value && value !== 'auto') return { agentId: value }
+  return {}
 }

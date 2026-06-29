@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { api } from '../api.js'
-import { rosterFromTasks, defaultAgentId } from '../agents.js'
+import { rosterFromTasks, assignmentOpts } from '../agents.js'
 import AgentPicker from './AgentPicker.jsx'
 import Markdown from './Markdown.jsx'
 import StatusBadge from './StatusBadge.jsx'
@@ -14,7 +14,7 @@ export default function RepoErrand({ repo, tasks, onStart, onOpenChanges }) {
   const [text, setText] = useState('')
   const [busy, setBusy] = useState(false)
   const [composing, setComposing] = useState(false) // force the launcher even when a finished errand lingers
-  const [assignTo, setAssignTo] = useState('') // agentId to assign, or '' for a new agent
+  const [assignTo, setAssignTo] = useState('auto') // 'auto' (General) | 'new' | agentId
   const logRef = useRef(null)
   const agents = rosterFromTasks(tasks)
 
@@ -29,11 +29,8 @@ export default function RepoErrand({ repo, tasks, onStart, onOpenChanges }) {
   const showStaged = !showChat && staged && !composing
   const showLauncher = !showChat && !showStaged
 
-  // Fresh repo → reset the composer and default to whoever last worked this repo.
-  useEffect(() => {
-    setComposing(false); setText('')
-    setAssignTo(defaultAgentId(rosterFromTasks(tasks), repo.nameWithOwner))
-  }, [repo.nameWithOwner])
+  // Fresh repo → reset the composer; default to letting the General auto-assign.
+  useEffect(() => { setComposing(false); setText(''); setAssignTo('auto') }, [repo.nameWithOwner])
   useEffect(() => { if (logRef.current) logRef.current.scrollTop = logRef.current.scrollHeight }, [live?.events?.length, live?.status, live?.streaming])
 
   const idle = live?.status === 'errand_idle'
@@ -51,7 +48,7 @@ export default function RepoErrand({ repo, tasks, onStart, onOpenChanges }) {
     const t = text.trim()
     if (!t) return
     setBusy(true)
-    try { await onStart(repo, t, { agentId: assignTo || undefined, fresh: !assignTo }); setText(''); setComposing(false) }
+    try { await onStart(repo, t, assignmentOpts(assignTo)); setText(''); setComposing(false) }
     catch (e) { alert('Failed to start: ' + e.message) }
     finally { setBusy(false) }
   }
