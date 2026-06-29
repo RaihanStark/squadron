@@ -514,7 +514,14 @@ export async function stageErrand(taskId) {
   }
 
   addEvent(taskId, { kind: 'status', text: 'Naming the change…' })
-  const named = await generateChangeName({ diff, instruction: ctx.instruction, model })
+  // Hand the namer only the compact --stat summary; it pulls a file's full hunks
+  // via read_diff only when it needs them, instead of us pushing the whole diff.
+  const named = await generateChangeName({
+    stat: await git.stagedDiffStat(wt),
+    instruction: ctx.instruction,
+    readFileDiff: (file) => git.stagedFileDiff(wt, file),
+    model,
+  })
   const title = named?.title || task.issueTitle || 'Quick task'
   const message = named?.commit || ctx.instruction || title
 

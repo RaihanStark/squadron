@@ -190,22 +190,27 @@ export async function runExecution({ prompt, cwd, model = 'opus', onEvent, signa
   }
 }
 
-// Largest diff we'll feed the namer — naming doesn't need the whole thing.
+// Largest --stat summary we'll feed the namer (a guard; the summary is small).
 const NAME_DIFF_MAX = 50000
 
 // Give a one-shot helper model a "submit" tool to return its answer as a typed
-// tool call, instead of us regex-scraping JSON out of its prose. Returns the MCP
-// server to register, the fully-qualified tool name to allow, and a getter for
-// the captured (normalized) value — null until the model calls the tool.
-function makeOutputCapture(createSdkMcpServer, tool, { name, description, schema, normalize }) {
+// tool call, instead of us regex-scraping JSON out of its prose. Optional `extras`
+// register additional tools the model may call before submitting — e.g. on-demand
+// retrieval, so we can front-load a small summary and let it pull only what it
+// needs (saving tokens). Returns the MCP server to register, the fully-qualified
+// tool names to allow, and a getter for the captured (normalized) value — null
+// until the model calls the submit tool.
+function makeOutputCapture(createSdkMcpServer, tool, { name, description, schema, normalize, extras = [] }) {
   let captured = null
-  const t = tool(name, description, schema, async (args) => {
+  const submit = tool(name, description, schema, async (args) => {
     captured = normalize ? normalize(args) : args
     return { content: [{ type: 'text', text: 'Recorded.' }] }
   })
+  const built = extras.map((e) => tool(e.name, e.description, e.schema, e.handler))
+  const names = [name, ...extras.map((e) => e.name)]
   return {
-    mcpServers: { squadron: createSdkMcpServer({ name: 'squadron', version: '0.1.0', tools: [t] }) },
-    allowedTool: `mcp__squadron__${name}`,
+    mcpServers: { squadron: createSdkMcpServer({ name: 'squadron', version: '0.1.0', tools: [submit, ...built] }) },
+    allowedTools: names.map((n) => `mcp__squadron__${n}`),
     get: () => captured,
   }
 }
@@ -246,7 +251,7 @@ Call the submit_choice tool with your decision — nothing else.`
         reason: (reason ? String(reason).trim() : '').slice(0, 200) || null,
       }),
     })
-    const q = query({ prompt, options: { model, permissionMode: 'bypassPermissions', mcpServers: out.mcpServers, allowedTools: [out.allowedTool], disallowedTools: [] } })
+    const q = query({ prompt, options: { model, permissionMode: 'bypassPermissions', mcpServers: out.mcpServers, allowedTools: out.allowedTools, disallowedTools: [] } })
     for await (const _ of q) { /* drain until the model calls submit_choice */ }
     return out.get()
   } catch {
@@ -254,25 +259,31 @@ Call the submit_choice tool with your decision — nothing else.`
   }
 }
 
-// Summarize a diff into a concise PR title + commit message. A cheap, tool-less
-// one-shot — used to name a quick task's changes by what actually changed rather
-// than the raw instruction. Returns { title, commit } or null on any failure so
-// callers can fall back to the instruction text.
-export async function generateChangeName({ diff, instruction, model = 'haiku' }) {
-  const text = String(diff || '').trim()
-  if (!text) return null
-  const clipped = text.length > NAME_DIFF_MAX ? text.slice(0, NAME_DIFF_MAX) + '\n…[diff truncated]…' : text
-  const prompt = `You are naming a code change for review. Below is the original request and the git diff of the changes that were made. Summarize what the diff ACTUALLY does (not just what was asked) into a concise title and commit message.
+// Largest single-file diff slice we hand back when the namer asks to inspect a file.
+const NAME_FILE_DIFF_MAX = 8000
 
-Call the submit_change_name tool with the title and commit message.
+// Summarize a change into a concise PR title + commit message. To keep this cheap,
+// we front-load only `git diff --stat` (filenames + line counts) and expose a
+// read_diff tool the namer calls to pull a specific file's hunks ONLY when the
+// summary isn't enough — so it spends tokens on the files that matter instead of
+// the whole diff. `readFileDiff(file)` returns one file's staged diff. Returns
+// { title, commit } or null on any failure so callers can fall back to the
+// instruction text.
+export async function generateChangeName({ stat, instruction, readFileDiff, model = 'haiku' }) {
+  const summary = String(stat || '').trim()
+  if (!summary) return null
+  const clipped = summary.length > NAME_DIFF_MAX ? summary.slice(0, NAME_DIFF_MAX) + '\n…[summary truncated]…' : summary
+  const prompt = `You are naming a code change for review. Below is the original request and a per-file summary (\`git diff --stat\`) of what changed. Name the change by what it ACTUALLY does (not just what was asked).
+
+If the file summary alone isn't enough to write an accurate title and commit message, call the read_diff tool with a path from the summary to see that file's actual hunks — read only the file(s) you need, not all of them. When ready, call submit_change_name with your result.
 
 --- ORIGINAL REQUEST ---
 ${String(instruction || '(none)').slice(0, 2000)}
 --- END REQUEST ---
 
---- DIFF ---
+--- CHANGED FILES (git diff --stat) ---
 ${clipped}
---- END DIFF ---`
+--- END CHANGED FILES ---`
 
   try {
     const { query, createSdkMcpServer, tool } = await sdk()
@@ -289,8 +300,19 @@ ${clipped}
         if (!t && !c) return null
         return { title: t || null, commit: c || null }
       },
+      extras: readFileDiff ? [{
+        name: 'read_diff',
+        description: 'Return the staged diff hunks for ONE changed file. Use only when the --stat summary is not enough to name the change.',
+        schema: { file: z.string().describe('A file path taken from the changed-files summary') },
+        handler: async ({ file }) => {
+          let d = ''
+          try { d = String((await readFileDiff(file)) || '') } catch { /* unreadable path */ }
+          if (d.length > NAME_FILE_DIFF_MAX) d = d.slice(0, NAME_FILE_DIFF_MAX) + '\n…[diff truncated]…'
+          return { content: [{ type: 'text', text: d.trim() || `(no staged diff for "${file}")` }] }
+        },
+      }] : [],
     })
-    const q = query({ prompt, options: { model, permissionMode: 'bypassPermissions', mcpServers: out.mcpServers, allowedTools: [out.allowedTool], disallowedTools: [] } })
+    const q = query({ prompt, options: { model, permissionMode: 'bypassPermissions', mcpServers: out.mcpServers, allowedTools: out.allowedTools, disallowedTools: [] } })
     for await (const _ of q) { /* drain until the model calls submit_change_name */ }
     return out.get()
   } catch {
