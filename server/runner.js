@@ -180,6 +180,38 @@ ${plan || '(none)'}
 
 // --- Plan phase ---
 
+// Open the interactive session for `ctx` and send its first message. If a RESUME
+// fails before the session produces anything — e.g. the prior session was pruned
+// from disk ("No conversation found with session ID") — restart once COLD so the
+// task doesn't hard-fail. A generation counter makes us ignore trailing messages
+// from the superseded (failed) handle so they can't clobber the fresh run.
+async function openResumable(ctx, { resume, makeSession, resumeMessage, coldMessage }) {
+  const launch = async (useResume) => {
+    const gen = ctx.gen = (ctx.gen || 0) + 1
+    if (ctx.handle) { try { ctx.handle.close() } catch { /* already closed */ } ctx.handle = null }
+    ctx.produced = false
+    const handle = await makeSession({
+      resume: useResume ? resume : undefined,
+      onMessage: (m) => {
+        if (gen !== ctx.gen) return // a superseded handle's trailing message — drop it
+        if ((m.type === 'system' && m.subtype === 'init') || m.type === 'assistant') ctx.produced = true
+        // Resume couldn't be loaded and nothing ran yet → fall back to a cold start, once.
+        if (useResume && m.type === 'result' && m.is_error && !ctx.produced) {
+          addEvent(ctx.id, { kind: 'status', text: "Couldn't resume that agent's session — starting fresh instead." })
+          updateTask(ctx.id, { resumed: false })
+          ctx.sessionId = null // let the fresh session register its own id
+          launch(false).catch((e) => { addEvent(ctx.id, { kind: 'error', text: e.message }); updateTask(ctx.id, { status: 'error', error: e.message }) })
+          return
+        }
+        onSessionMessage(ctx, m)
+      },
+    })
+    ctx.handle = handle
+    handle.send(useResume ? resumeMessage() : await coldMessage())
+  }
+  await launch(!!resume)
+}
+
 // `resume` is a prior session id (from an assigned agent): the planner continues
 // that conversation, keeping the codebase context it already built instead of
 // cold-starting a fresh exploration of the repo.
@@ -199,20 +231,13 @@ export async function startPlan(task, { defaultBranch, resume } = {}) {
     const ctx = { id, owner, repo, issue, wt, branch, base, model, phase: 'planning', lastText: '', plan: '' }
     sessions.set(id, ctx)
 
-    const handle = await openSession({
-      cwd: wt, model, permissionMode: 'plan', planModeInstructions: PLAN_INSTRUCTIONS,
-      askUser: askUserFor(id), resume, // armed now so ask_user works when we reuse this session to execute
-      onMessage: (m) => onSessionMessage(ctx, m),
+    await openResumable(ctx, {
+      resume, // armed so ask_user works when we reuse this session to execute; falls back cold if the session is gone
+      makeSession: (o) => openSession({ cwd: wt, model, permissionMode: 'plan', planModeInstructions: PLAN_INSTRUCTIONS, askUser: askUserFor(id), ...o }),
+      resumeMessage: () => planResumeFirstMessage(owner, repo, issue),
+      // Cold start: front-load the file tree so the planner doesn't discover the repo one read at a time.
+      coldMessage: async () => planFirstMessage(owner, repo, issue, await git.trackedFiles(wt).catch(() => ({ total: 0, shown: 0, list: '(unavailable)' }))),
     })
-    ctx.handle = handle
-    if (resume) {
-      handle.send(planResumeFirstMessage(owner, repo, issue))
-    } else {
-      // Cold start: front-load the file tree so the planner doesn't discover the
-      // repo structure one read at a time.
-      const tree = await git.trackedFiles(wt).catch(() => ({ total: 0, shown: 0, list: '(unavailable)' }))
-      handle.send(planFirstMessage(owner, repo, issue, tree))
-    }
   } catch (err) {
     console.error(`[plan ${id}]`, err)
     addEvent(id, { kind: 'error', text: err.message })
@@ -243,20 +268,13 @@ export async function startErrand(task, { instruction, defaultBranch, resume } =
     const ctx = { id, owner, repo, issue, wt, branch, base, model, phase: 'errand', kind: 'errand', instruction: text, lastText: '' }
     sessions.set(id, ctx)
 
-    const handle = await openSession({
-      cwd: wt, model, permissionMode: 'bypassPermissions',
-      askUser: askUserFor(id), resume,
-      onMessage: (m) => onSessionMessage(ctx, m),
+    await openResumable(ctx, {
+      resume,
+      makeSession: (o) => openSession({ cwd: wt, model, permissionMode: 'bypassPermissions', askUser: askUserFor(id), ...o }),
+      resumeMessage: () => errandResumeFirstMessage(owner, repo, text),
+      // Cold start: front-load the file tree so the agent doesn't discover the repo one read at a time.
+      coldMessage: async () => errandFirstMessage(owner, repo, text, await git.trackedFiles(wt).catch(() => ({ total: 0, shown: 0, list: '(unavailable)' }))),
     })
-    ctx.handle = handle
-    if (resume) {
-      handle.send(errandResumeFirstMessage(owner, repo, text))
-    } else {
-      // Cold start: front-load the file tree so the agent doesn't discover the
-      // repo structure one read at a time.
-      const tree = await git.trackedFiles(wt).catch(() => ({ total: 0, shown: 0, list: '(unavailable)' }))
-      handle.send(errandFirstMessage(owner, repo, text, tree))
-    }
   } catch (err) {
     console.error(`[errand ${id}]`, err)
     addEvent(id, { kind: 'error', text: err.message })
@@ -381,6 +399,12 @@ function onPlanMessage(ctx, m) {
       }
       break
     case 'result':
+      if (m.is_error) {
+        const why = m.error?.message || `session ${m.subtype || 'error'}`
+        addEvent(id, { kind: 'error', text: why })
+        updateTask(id, { status: 'error', error: why })
+        break
+      }
       // a plan turn finished — capture the latest plan and await the operator
       ctx.plan = ctx.lastText
       updateTask(id, { status: 'planned', plan: ctx.plan })
