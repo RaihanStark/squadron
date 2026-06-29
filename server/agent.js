@@ -215,6 +215,25 @@ function makeOutputCapture(createSdkMcpServer, tool, { name, description, schema
   }
 }
 
+// Normalize the marshal's submitted decision into { agentId, reason }: a trimmed
+// string agentId or null, and a short (<=200 char) reason or null. Exported so
+// it can be unit-tested without driving a live model.
+export function normalizeChoice({ agentId, reason } = {}) {
+  return {
+    agentId: typeof agentId === 'string' && agentId.trim() ? agentId.trim() : null,
+    reason: (reason ? String(reason).trim() : '').slice(0, 200) || null,
+  }
+}
+
+// Normalize the namer's submitted { title, commit }; returns null when both are
+// empty so the caller falls back to the instruction text. Exported for testing.
+export function normalizeChangeName({ title, commit } = {}) {
+  const t = String(title || '').trim().replace(/\s+/g, ' ').slice(0, 72)
+  const c = String(commit || '').trim()
+  if (!t && !c) return null
+  return { title: t || null, commit: c || null }
+}
+
 // The MARSHAL: a cheap, tool-less orchestrator that routes a task to the best
 // available agent — one who already knows the codebase or did related work, so
 // it reuses its context (saving tokens and ramp-up) — or to a fresh agent when
@@ -246,10 +265,7 @@ Call the submit_choice tool with your decision — nothing else.`
         agentId: z.string().nullable().describe('The chosen agent id from the list, or null to start a fresh agent'),
         reason: z.string().nullable().describe('One short sentence explaining the choice'),
       },
-      normalize: ({ agentId, reason }) => ({
-        agentId: typeof agentId === 'string' && agentId.trim() ? agentId.trim() : null,
-        reason: (reason ? String(reason).trim() : '').slice(0, 200) || null,
-      }),
+      normalize: normalizeChoice,
     })
     // maxTurns bounds the run: the marshal should make a single submit_choice
     // call, so a few turns of slack guards against a model that loops instead.
@@ -296,12 +312,7 @@ ${clipped}
         title: z.string().describe('Imperative summary, <= 70 chars, no trailing period'),
         commit: z.string().describe('Conventional commit subject line; optionally a blank line then a short body'),
       },
-      normalize: ({ title, commit }) => {
-        const t = String(title || '').trim().replace(/\s+/g, ' ').slice(0, 72)
-        const c = String(commit || '').trim()
-        if (!t && !c) return null
-        return { title: t || null, commit: c || null }
-      },
+      normalize: normalizeChangeName,
       extras: readFileDiff ? [{
         name: 'read_diff',
         description: 'Return the staged diff hunks for ONE changed file. Use only when the --stat summary is not enough to name the change.',

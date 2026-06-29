@@ -728,6 +728,21 @@ ${diff}
 --- END DIFF ---`
 }
 
+// Normalize a submitted review into { summary, findings[] } with typed fields
+// (string file/body, numeric-or-null line, severity defaulting to 'quality').
+// Exported so it can be unit-tested without driving a live review run.
+export function normalizeReview(p = {}) {
+  return {
+    summary: String(p.summary || '').trim(),
+    findings: Array.isArray(p.findings) ? p.findings.map((f) => ({
+      file: String(f.file || ''),
+      line: Number.isFinite(Number(f.line)) ? Number(f.line) : null,
+      severity: String(f.severity || 'quality'),
+      body: String(f.body || ''),
+    })) : [],
+  }
+}
+
 // RIGHT-side (new-file) line numbers that are commentable, per file path —
 // i.e. added/context lines present in the diff. GitHub rejects inline comments
 // on lines not in the diff, so we use this to split findings.
@@ -797,15 +812,7 @@ export async function startReview(task) {
             body: z.string().describe('the problem and a concrete suggested fix'),
           })).describe('findings; empty array if no real issues'),
         },
-        normalize: (p) => ({
-          summary: String(p.summary || '').trim(),
-          findings: Array.isArray(p.findings) ? p.findings.map((f) => ({
-            file: String(f.file || ''),
-            line: Number.isFinite(Number(f.line)) ? Number(f.line) : null,
-            severity: String(f.severity || 'quality'),
-            body: String(f.body || ''),
-          })) : [],
-        }),
+        normalize: normalizeReview,
       },
     })
 
