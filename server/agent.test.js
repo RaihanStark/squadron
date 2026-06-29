@@ -36,6 +36,11 @@ test('describeTool renders known tools and falls back for unknown ones', () => {
   assert.equal(describeTool({ name: 'mcp__squadron__read_diff', input: {} }), '🔧 mcp__squadron__read_diff')
 })
 
+test('describeTool renders a Task delegation with the subagent type and description', () => {
+  assert.equal(describeTool({ name: 'Task', input: { subagent_type: 'scout', description: 'find auth usages' } }), '🤝 scout: find auth usages')
+  assert.equal(describeTool({ name: 'Task', input: {} }), '🤝 subagent')
+})
+
 test('normalizeChoice trims a real agentId and caps the reason', () => {
   const r = normalizeChoice({ agentId: '  agent-7 ', reason: '  picked it  ' })
   assert.equal(r.agentId, 'agent-7')

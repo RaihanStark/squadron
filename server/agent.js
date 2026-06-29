@@ -32,8 +32,43 @@ export function describeTool(block) {
     case 'Grep': return `🔍 grep "${i.pattern || ''}"`
     case 'Glob': return `🔍 glob ${i.pattern || ''}`
     case 'TodoWrite': return `📋 planning…`
+    case 'Task': return `🤝 ${i.subagent_type || 'subagent'}${i.description ? `: ${String(i.description).slice(0, 80)}` : ''}`
     default: return `🔧 ${n}`
   }
+}
+
+// Subagents the main agent delegates to via the SDK's built-in `Task` tool.
+// Pushing read-only grunt work — locating files, searching for usages, reading
+// and summarizing code — onto a subagent running a CHEAPER model keeps it off
+// the expensive main model, runs in an isolated context window (so the grunt
+// work never bloats the main conversation), and lets several run in parallel.
+// We want the main agent to lean on this HARD — delegating is faster and
+// cheaper — so the description below and the prompts push it to be the default
+// for any read-only lookup. The confine hook still applies to every subagent's
+// tool calls, so they stay inside the worktree.
+const SUBAGENT_MODEL = 'haiku'
+const SUBAGENTS = {
+  scout: {
+    description:
+      'Read-only codebase scout that runs on a cheaper, faster model in its own context window. This is your DEFAULT tool for ANY read-only investigation: locating files, searching for symbols/usages/strings, reading files, tracing how something works, or summarizing code — anything that does NOT modify files. Strongly prefer delegating to a scout over reading or grepping yourself, even for a single lookup, and spawn several in parallel for independent questions. It returns a tight summary, so your context stays lean and the run stays cheap. Only skip it for a file you must open in order to edit it.',
+    prompt: `You are a fast, read-only scout exploring a code repository on behalf of a parent engineering agent. Your job is to find things and report back concisely — never modify files.
+
+- Use Grep/Glob to locate code and Read to inspect it; batch independent searches into one step.
+- Answer exactly what was asked. Lead with the conclusion, then cite concrete file:line references.
+- Keep the summary tight — the parent pays for every token you return. Don't paste large code blocks; point to locations instead.`,
+    tools: ['Read', 'Grep', 'Glob'],
+    model: SUBAGENT_MODEL,
+  },
+}
+
+// The subagent that produced a message, or null if it came from the lead agent.
+// The SDK forwards a subagent's tool calls as assistant messages tagged with a
+// `parent_tool_use_id` (and usually `subagent_type`, e.g. 'scout'), so we can
+// surface them as junior-rank lines in the UI instead of mixing them in with the
+// lead agent's own activity.
+export function subagentLabel(msg) {
+  if (!msg?.parent_tool_use_id) return null
+  return msg.subagent_type || 'subagent'
 }
 
 // An async message queue we feed the SDK as streaming input. Yields user
@@ -83,6 +118,7 @@ export async function openSession({ cwd, model = 'opus', permissionMode = 'plan'
     prompt: input.gen,
     options: {
       cwd, model, permissionMode, mcpServers,
+      agents: SUBAGENTS, // let the main agent delegate cheap grunt work to a cheaper subagent
       includePartialMessages: true, // stream token deltas so the UI renders live
       allowDangerouslySkipPermissions: true, // arm the capability so we can flip to execute later
       hooks: makeConfineHook(cwd), // confine the agent to its worktree
@@ -141,6 +177,7 @@ export async function runExecution({ prompt, cwd, model = 'opus', onEvent, signa
 
   const baseOptions = {
     cwd, model, permissionMode: 'bypassPermissions', allowDangerouslySkipPermissions: true, mcpServers,
+    agents: SUBAGENTS, // let the main agent delegate cheap grunt work to a cheaper subagent
     includePartialMessages: true, // stream token deltas so the UI renders live
     hooks: makeConfineHook(cwd), // confine the agent to its worktree
   }
@@ -163,12 +200,18 @@ export async function runExecution({ prompt, cwd, model = 'opus', onEvent, signa
           case 'system':
             if (msg.subtype === 'init') onEvent({ kind: 'status', text: `${resume ? 'resumed · ' : 'executing · '}${msg.model || model}` })
             break
-          case 'assistant':
+          case 'assistant': {
+            const sub = subagentLabel(msg)
             for (const b of msg.message?.content ?? []) {
-              if (b.type === 'text' && b.text?.trim()) { summary = b.text.trim(); onEvent({ kind: 'text', text: summary }) }
-              else if (b.type === 'tool_use' && !b.name?.endsWith('ask_user') && !(output && b.name?.endsWith(output.name))) onEvent({ kind: 'tool', text: describeTool(b) })
+              if (b.type === 'text' && b.text?.trim()) {
+                if (sub) continue // a subagent's prose never overwrites the lead agent's summary
+                summary = b.text.trim(); onEvent({ kind: 'text', text: summary })
+              } else if (b.type === 'tool_use' && !b.name?.endsWith('ask_user') && !(output && b.name?.endsWith(output.name))) {
+                onEvent({ kind: 'tool', text: describeTool(b), ...(sub ? { sub } : {}) })
+              }
             }
             break
+          }
           case 'result': {
             if (msg.result) summary = msg.result
             const ok = !msg.is_error && msg.subtype === 'success'
