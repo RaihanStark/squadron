@@ -1,10 +1,13 @@
 import { useEffect, useState } from 'react'
 import { api } from '../api.js'
 import { ACTIVE } from '../constants.js'
+import { assignmentOpts } from '../agents.js'
+import AgentPicker from './AgentPicker.jsx'
 
-export default function IssueDetail({ repo, issue, me, task, onDispatch, onOpenTask, onBack }) {
+export default function IssueDetail({ repo, issue, me, task, agents = [], onDispatch, onOpenTask, onBack }) {
   const [owner, name] = repo.nameWithOwner.split('/')
   const [model, setModel] = useState('opus')
+  const [assignTo, setAssignTo] = useState('auto') // 'auto' (Marshal) | 'new' | agentId
   const [full, setFull] = useState(issue.local ? issue : null)
   const [error, setError] = useState(null)
   const [acting, setActing] = useState(false)
@@ -16,6 +19,7 @@ export default function IssueDetail({ repo, issue, me, task, onDispatch, onOpenT
   useEffect(() => {
     setEditing(false)
     setConfirmingDelete(false)
+    setAssignTo('auto') // default to letting the Marshal auto-assign
     if (issue.local) { setFull(issue); return }
     setFull(null); setError(null)
     api(`/api/repos/${owner}/${name}/issues/${issue.number}`).then(setFull).catch((e) => setError(e.message))
@@ -94,10 +98,11 @@ export default function IssueDetail({ repo, issue, me, task, onDispatch, onOpenT
                 <button className="approve-btn" onClick={() => onOpenTask(task.id)}>👁 View run →</button>
               ) : (
                 <>
+                  <AgentPicker agents={agents} repo={repo.nameWithOwner} value={assignTo} onChange={setAssignTo} />
                   <select className="model-select" value={model} onChange={(e) => setModel(e.target.value)} title="Model">
                     <option value="opus">Opus</option><option value="sonnet">Sonnet</option><option value="haiku">Haiku</option>
                   </select>
-                  <button className="approve-btn" onClick={() => onDispatch(repo, issue, model)}>📋 Plan</button>
+                  <button className="approve-btn" disabled={acting} onClick={() => { setActing(true); Promise.resolve(onDispatch(repo, issue, model, assignmentOpts(assignTo))).finally(() => setActing(false)) }}>{acting ? 'Dispatching…' : '📋 Plan'}</button>
                 </>
               )}
             </>

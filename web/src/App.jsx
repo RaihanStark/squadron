@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from 'react'
 import { api, DEMO, PARAMS } from './api.js'
-import { ACTIVE, NEEDS_YOU } from './constants.js'
+import { ACTIVE, NEEDS_YOU, isInactive } from './constants.js'
 import { usePref, getPref, setPref } from './prefs.js'
+import { rosterFromTasks } from './agents.js'
 import { requestNotifyPermission, notifyTransition } from './notify.js'
 import NotifSettings from './components/NotifSettings.jsx'
 import Sidebar from './components/Sidebar.jsx'
@@ -28,6 +29,17 @@ export default function App() {
   // Last-seen status per task, so we can fire a desktop notification only on a
   // genuine live transition (seeded on load/re-sync to avoid a startup burst).
   const lastStatus = useRef({})
+  // In-flight dispatches, keyed by action+target. Coalesces rapid duplicate
+  // submits (double-clicks) so one click creates one agent — concurrent calls
+  // with the same key share the first call's promise; the key frees on settle.
+  const inflight = useRef(new Map())
+  const guard = (key, fn) => {
+    const m = inflight.current
+    if (m.has(key)) return m.get(key)
+    const p = (async () => { try { return await fn() } finally { m.delete(key) } })()
+    m.set(key, p)
+    return p
+  }
 
   // Fetch the curated fleet, sort by recency, and reconcile the active repo.
   const loadRepos = () =>
@@ -90,6 +102,11 @@ export default function App() {
           notifyTransition(payload.task, { onClick: navigate })
         }
       }
+      if (payload.type === 'delete') {
+        delete lastStatus.current[payload.id]
+        setTasks((prev) => { const next = { ...prev }; delete next[payload.id]; return next })
+        return
+      }
       setTasks((prev) => {
         const cur = prev[payload.id] || { id: payload.id, events: [] }
         if (payload.type === 'task') return { ...prev, [payload.id]: { ...cur, ...payload.task, events: cur.events || [] } }
@@ -110,90 +127,130 @@ export default function App() {
   }, [])
 
   const taskList = Object.values(tasks).sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0))
+  const agents = rosterFromTasks(taskList)
   const activeCount = taskList.filter((t) => ACTIVE.has(t.status)).length
   const waitingCount = taskList.filter((t) => NEEDS_YOU.has(t.status)).length
   const activeRepo = repos.find((r) => r.nameWithOwner === active)
 
-  async function dispatch(repoObj, issue, model) {
-    const [owner, repo] = repoObj.nameWithOwner.split('/')
-    try {
-      const task = await api(`/api/repos/${owner}/${repo}/plan`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          issueNumber: issue.number ?? issue.id,
-          issueTitle: issue.title,
-          local: !!issue.local,
-          body: issue.body,
-          defaultBranch: repoObj.defaultBranchRef?.name,
-          model,
-        }),
-      })
-      setTasks((prev) => ({ ...prev, [task.id]: { ...(prev[task.id] || {}), ...task, events: prev[task.id]?.events || [] } }))
-      setSelectedTask(task.id)
-      setView('agents')
-    } catch (e) { alert('Plan failed: ' + e.message) }
+  function dispatch(repoObj, issue, model, opts = {}) {
+    const num = issue.number ?? issue.id
+    return guard(`plan:${repoObj.nameWithOwner}#${num}`, async () => {
+      const [owner, repo] = repoObj.nameWithOwner.split('/')
+      try {
+        const task = await api(`/api/repos/${owner}/${repo}/plan`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            issueNumber: num,
+            issueTitle: issue.title,
+            local: !!issue.local,
+            body: issue.body,
+            defaultBranch: repoObj.defaultBranchRef?.name,
+            model,
+            agentId: opts.agentId,
+            fresh: opts.fresh,
+          }),
+        })
+        setTasks((prev) => ({ ...prev, [task.id]: { ...(prev[task.id] || {}), ...task, events: prev[task.id]?.events || [] } }))
+        setSelectedTask(task.id)
+        setView('agents')
+      } catch (e) { alert('Plan failed: ' + e.message) }
+    })
   }
 
-  async function review(repoObj, pr, model) {
-    const [owner, repo] = repoObj.nameWithOwner.split('/')
-    try {
-      const task = await api(`/api/repos/${owner}/${repo}/review`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ prNumber: pr.number, prTitle: pr.title, model }),
-      })
-      setTasks((prev) => ({ ...prev, [task.id]: { ...(prev[task.id] || {}), ...task, events: prev[task.id]?.events || [] } }))
-      setSelectedTask(task.id)
-      setView('agents')
-    } catch (e) { alert('Review failed: ' + e.message) }
+  function review(repoObj, pr, model) {
+    return guard(`review:${repoObj.nameWithOwner}#${pr.number}`, async () => {
+      const [owner, repo] = repoObj.nameWithOwner.split('/')
+      try {
+        const task = await api(`/api/repos/${owner}/${repo}/review`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ prNumber: pr.number, prTitle: pr.title, model }),
+        })
+        setTasks((prev) => ({ ...prev, [task.id]: { ...(prev[task.id] || {}), ...task, events: prev[task.id]?.events || [] } }))
+        setSelectedTask(task.id)
+        setView('agents')
+      } catch (e) { alert('Review failed: ' + e.message) }
+    })
   }
 
-  async function fixCi(repoObj, pr, model) {
-    const [owner, repo] = repoObj.nameWithOwner.split('/')
-    try {
-      const task = await api(`/api/repos/${owner}/${repo}/pulls/${pr.number}/fix-ci`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ prTitle: pr.title, model }),
-      })
-      setTasks((prev) => ({ ...prev, [task.id]: { ...(prev[task.id] || {}), ...task, events: prev[task.id]?.events || [] } }))
-      setSelectedTask(task.id)
-      setView('agents')
-    } catch (e) { alert('Fix CI failed: ' + e.message) }
+  function fixCi(repoObj, pr, model) {
+    return guard(`fixci:${repoObj.nameWithOwner}#${pr.number}`, async () => {
+      const [owner, repo] = repoObj.nameWithOwner.split('/')
+      try {
+        const task = await api(`/api/repos/${owner}/${repo}/pulls/${pr.number}/fix-ci`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ prTitle: pr.title, model }),
+        })
+        setTasks((prev) => ({ ...prev, [task.id]: { ...(prev[task.id] || {}), ...task, events: prev[task.id]?.events || [] } }))
+        setSelectedTask(task.id)
+        setView('agents')
+      } catch (e) { alert('Fix CI failed: ' + e.message) }
+    })
   }
 
-  async function resolveConflicts(repoObj, pr, model) {
-    const [owner, repo] = repoObj.nameWithOwner.split('/')
-    try {
-      const task = await api(`/api/repos/${owner}/${repo}/resolve`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ prNumber: pr.number, prTitle: pr.title, model }),
-      })
-      setTasks((prev) => ({ ...prev, [task.id]: { ...(prev[task.id] || {}), ...task, events: prev[task.id]?.events || [] } }))
-      setSelectedTask(task.id)
-      setView('agents')
-    } catch (e) { alert('Resolve failed: ' + e.message) }
+  function resolveConflicts(repoObj, pr, model) {
+    return guard(`resolve:${repoObj.nameWithOwner}#${pr.number}`, async () => {
+      const [owner, repo] = repoObj.nameWithOwner.split('/')
+      try {
+        const task = await api(`/api/repos/${owner}/${repo}/resolve`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ prNumber: pr.number, prTitle: pr.title, model }),
+        })
+        setTasks((prev) => ({ ...prev, [task.id]: { ...(prev[task.id] || {}), ...task, events: prev[task.id]?.events || [] } }))
+        setSelectedTask(task.id)
+        setView('agents')
+      } catch (e) { alert('Resolve failed: ' + e.message) }
+    })
   }
 
   // Plan-less interactive "quick fix" on an open PR — surfaced in the PR detail's
   // docked sidebar. Returns the task so the panel can track it live.
-  async function startPrFix(repoObj, pr, instruction) {
-    const [owner, repo] = repoObj.nameWithOwner.split('/')
-    const task = await api(`/api/repos/${owner}/${repo}/pulls/${pr.number}/fix`, {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ instruction, prTitle: pr.title }),
+  function startPrFix(repoObj, pr, instruction) {
+    return guard(`prfix:${repoObj.nameWithOwner}#${pr.number}`, async () => {
+      const [owner, repo] = repoObj.nameWithOwner.split('/')
+      const task = await api(`/api/repos/${owner}/${repo}/pulls/${pr.number}/fix`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ instruction, prTitle: pr.title }),
+      })
+      setTasks((prev) => ({ ...prev, [task.id]: { ...(prev[task.id] || {}), ...task, events: prev[task.id]?.events || [] } }))
+      return task
     })
-    setTasks((prev) => ({ ...prev, [task.id]: { ...(prev[task.id] || {}), ...task, events: prev[task.id]?.events || [] } }))
-    return task
   }
 
   // Plan-less "quick task": create an errand and surface it in the repo sidebar.
-  async function startErrand(repoObj, instruction) {
-    const [owner, repo] = repoObj.nameWithOwner.split('/')
-    const task = await api(`/api/repos/${owner}/${repo}/errand`, {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ instruction, defaultBranch: repoObj.defaultBranchRef?.name }),
+  // By default it seamlessly continues this repo's recent agent (reusing context
+  // to save tokens); `opts.fresh` forces a clean session.
+  function startErrand(repoObj, instruction, opts = {}) {
+    return guard(`errand:${repoObj.nameWithOwner}`, async () => {
+      const [owner, repo] = repoObj.nameWithOwner.split('/')
+      const task = await api(`/api/repos/${owner}/${repo}/errand`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ instruction, defaultBranch: repoObj.defaultBranchRef?.name, agentId: opts.agentId, fresh: opts.fresh }),
+      })
+      setTasks((prev) => ({ ...prev, [task.id]: { ...(prev[task.id] || {}), ...task, events: prev[task.id]?.events || [] } }))
+      return task
     })
-    setTasks((prev) => ({ ...prev, [task.id]: { ...(prev[task.id] || {}), ...task, events: prev[task.id]?.events || [] } }))
-    return task
+  }
+
+  // Dismiss a finished/inactive agent — frees its worktree and drops its history.
+  async function dismissTask(taskId) {
+    try {
+      await api(`/api/tasks/${taskId}`, { method: 'DELETE' })
+      setTasks((prev) => { const next = { ...prev }; delete next[taskId]; return next })
+      setSelectedTask((cur) => (cur === taskId ? null : cur))
+    } catch (e) { alert('Could not dismiss agent: ' + e.message) }
+  }
+
+  // Dismiss every inactive agent in one go.
+  async function clearInactiveTasks() {
+    const inactive = taskList.filter((t) => isInactive(t.status))
+    if (!inactive.length) return
+    if (!confirm(`Dismiss ${inactive.length} inactive agent${inactive.length > 1 ? 's' : ''} and their history?`)) return
+    try {
+      await api('/api/tasks/clear-inactive', { method: 'POST' })
+      const ids = new Set(inactive.map((t) => t.id))
+      setTasks((prev) => Object.fromEntries(Object.entries(prev).filter(([id]) => !ids.has(id))))
+      setSelectedTask((cur) => (ids.has(cur) ? null : cur))
+    } catch (e) { alert('Could not clear agents: ' + e.message) }
   }
 
   const openTask = (taskId) => { setSelectedTask(taskId); setView('agents') }
@@ -247,9 +304,10 @@ export default function App() {
 
         <main className="main">
           {view === 'agents' ? (
-            <AgentsPanel tasks={taskList} selected={selectedTask} setSelected={setSelectedTask} onOpenChanges={openChanges} />
+            <AgentsPanel tasks={taskList} selected={selectedTask} setSelected={setSelectedTask} onOpenChanges={openChanges}
+              onDismiss={dismissTask} onClearInactive={clearInactiveTasks} />
           ) : view === 'issue' && selectedIssue ? (
-            <IssueDetail repo={selectedIssue.repo} issue={selectedIssue.issue} me={me}
+            <IssueDetail repo={selectedIssue.repo} issue={selectedIssue.issue} me={me} agents={agents}
               task={findTask((t) => `${t.owner}/${t.repo}` === selectedIssue.repo.nameWithOwner && (t.kind || 'plan') !== 'review' && t.issueNumber == (selectedIssue.issue.number ?? selectedIssue.issue.id))}
               onDispatch={dispatch} onOpenTask={openTask} onBack={backToRepo} />
           ) : view === 'changes' && selectedChange ? (

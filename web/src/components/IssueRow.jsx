@@ -4,6 +4,7 @@ import StatusBadge from './StatusBadge.jsx'
 
 export default function IssueRow({ issue: it, task, onDispatch, onOpenTask, onOpenIssue }) {
   const [model, setModel] = useState('opus')
+  const [busy, setBusy] = useState(false) // guard against double-click creating two agents
   // An in-flight task owns this issue — show its live status and a way to jump
   // to it, rather than offering a second Plan (which the backend would dedupe).
   const inflight = task && ACTIVE.has(task.status)
@@ -36,7 +37,7 @@ export default function IssueRow({ issue: it, task, onDispatch, onOpenTask, onOp
               <option value="sonnet">Sonnet</option>
               <option value="haiku">Haiku</option>
             </select>
-            <button className="dispatch" onClick={() => onDispatch(it, model)}>📋 Plan</button>
+            <button className="dispatch" disabled={busy} onClick={() => { setBusy(true); Promise.resolve(onDispatch(it, model)).finally(() => setBusy(false)) }}>{busy ? '…' : '📋 Plan'}</button>
           </span>
         )}
       </div>

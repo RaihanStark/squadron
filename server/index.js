@@ -12,12 +12,27 @@ import * as preview from './preview.js'
 import * as usage from './usage.js'
 import * as runConfig from './runConfig.js'
 import * as selectedRepos from './selectedRepos.js'
-import { bus, listTasks, getTask, createTask, findActiveByIssue } from './tasks.js'
+import { bus, listTasks, getTask, createTask, findActiveByIssue, resolveAssignment, listAgents, addEvent } from './tasks.js'
 
 const app = express()
 const PORT = process.env.PORT || 5174
 
 app.use(express.json())
+
+// Resolve who works a new task. Explicit `agentId`/`fresh` win; otherwise the
+// MARSHAL auto-routes it to the best agent (or a fresh one). Returns the resolved
+// assignment ({ resume, agentId, agentName, model }) plus the Marshal's reason.
+async function assignTask({ owner, repo, instruction, agentId, fresh, model }) {
+  let reason = null
+  if (!agentId && !fresh) {
+    const g = await runner.chooseAssignment({ owner, repo, instruction })
+    if (g.agentId) agentId = g.agentId
+    else fresh = true // the Marshal chose a fresh agent — don't fall back to the heuristic
+    reason = g.reason
+  }
+  const a = await resolveAssignment({ owner, repo, agentId, fresh, model })
+  return { ...a, reason }
+}
 
 // Small helper so every route gets consistent error handling.
 const handle = (fn) => async (req, res) => {
@@ -146,14 +161,18 @@ app.post('/api/repos/:owner/:repo/pulls/:number/merge', handle(async (req) =>
 // immediately; the plan chat streams over /api/stream.
 app.post('/api/repos/:owner/:repo/plan', handle(async (req) => {
   const { owner, repo } = req.params
-  const { issueNumber, issueTitle, model, defaultBranch, local, body } = req.body
+  const { issueNumber, issueTitle, model, defaultBranch, local, body, agentId, fresh } = req.body
   if (!issueNumber) throw new Error('issueNumber is required')
   // Dedupe: if a plan/run is already in flight for this issue, return it
   // instead of spawning a second agent.
   const existing = await findActiveByIssue(owner, repo, issueNumber)
   if (existing) return { ...existing, deduped: true }
-  const task = await createTask({ owner, repo, issueNumber, issueTitle, model, local: !!local, body })
-  runner.startPlan(task, { defaultBranch }).catch((e) => console.error('startPlan crashed', e))
+  // The Marshal assigns a person to scope this issue (or you can pin one). It
+  // continues an existing agent's context when that helps, else starts fresh.
+  const a = await assignTask({ owner, repo, instruction: [issueTitle, body].filter(Boolean).join(' — '), agentId, fresh, model })
+  const task = await createTask({ owner, repo, issueNumber, issueTitle, model: a.model || model, local: !!local, body, agentId: a.agentId, agentName: a.agentName })
+  if (a.reason) addEvent(task.id, { kind: 'status', text: `🎖 Marshal → ${a.agentName || 'a new agent'}: ${a.reason}` })
+  runner.startPlan(task, { defaultBranch, resume: a.resume }).catch((e) => console.error('startPlan crashed', e))
   return task
 }))
 
@@ -219,13 +238,19 @@ app.post('/api/repos/:owner/:repo/resolve', handle(async (req) => {
 // Ready to Review without the plan/approve ceremony. Streams over /api/stream.
 app.post('/api/repos/:owner/:repo/errand', handle(async (req) => {
   const { owner, repo } = req.params
-  const { instruction, model, defaultBranch } = req.body || {}
+  const { instruction, model, defaultBranch, fresh, agentId } = req.body || {}
   const text = (instruction || '').trim()
   if (!text) throw new Error('instruction is required')
+  // The Marshal assigns this quick task to the best agent — continuing one whose
+  // context fits (saving tokens) or a fresh one. `agentId` pins a specific agent;
+  // `fresh: true` forces a clean slate.
+  const a = await assignTask({ owner, repo, instruction: text, agentId, fresh, model })
   const task = await createTask({
-    owner, repo, issueNumber: null, issueTitle: text.slice(0, 80), kind: 'errand', local: true, body: text, model,
+    owner, repo, issueNumber: null, issueTitle: text.slice(0, 80), kind: 'errand', local: true, body: text,
+    model: a.model || model, agentId: a.agentId, agentName: a.agentName,
   })
-  runner.startErrand(task, { instruction: text, defaultBranch }).catch((e) => console.error('startErrand crashed', e))
+  if (a.reason) addEvent(task.id, { kind: 'status', text: `🎖 Marshal → ${a.agentName || 'a new agent'}: ${a.reason}` })
+  runner.startErrand(task, { instruction: text, defaultBranch, resume: a.resume }).catch((e) => console.error('startErrand crashed', e))
   return task
 }))
 
@@ -282,6 +307,9 @@ app.put('/api/repos/:owner/:repo/run-command', handle(async (req) =>
 
 app.get('/api/tasks', handle(() => listTasks()))
 
+// The roster of agents (persons) you can assign work to.
+app.get('/api/agents', handle(() => listAgents()))
+
 app.get('/api/tasks/:id', handle(async (req) => {
   const t = await getTask(req.params.id)
   if (!t) throw new Error('task not found')
@@ -289,6 +317,18 @@ app.get('/api/tasks/:id', handle(async (req) => {
 }))
 
 app.post('/api/tasks/:id/cancel', handle(async (req) => ({ cancelled: runner.cancel(req.params.id) })))
+
+// Dismiss every inactive agent at once (cleans up worktrees + drops history).
+// Declared before the :id route so "clear-inactive" isn't captured as an id.
+app.post('/api/tasks/clear-inactive', handle(async () => ({ cleared: await runner.discardInactive() })))
+
+// Dismiss a single inactive agent (finished/cancelled/errored) and reclaim its
+// worktree + history. Refuses agents that are still active or awaiting you.
+app.delete('/api/tasks/:id', handle(async (req) => {
+  const deleted = await runner.discardTask(req.params.id)
+  if (!deleted) throw new Error('agent is still active — cancel it first')
+  return { deleted }
+}))
 
 // Answer a clarifying question a waiting agent asked via ask_user.
 app.post('/api/tasks/:id/answer', handle(async (req) => {

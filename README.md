@@ -86,6 +86,37 @@ keeps execution (where agents are reliable) autonomous. During execution, an age
 still **pause and ask you** via `ask_user` when a wrong assumption would be expensive,
 resuming where it left off once you answer.
 
+## Your squadron of agents — reuse context, save tokens
+
+Agents in Squadron are persistent **persons**, not throwaway processes. Each one
+carries a Top Gun-style callsign (Maverick, Goose, Iceman, …) and keeps its Claude
+session — the context it built exploring your repo — alive across the tasks it
+works. So when you dispatch a follow-up errand or plan, you don't have to pay for a
+cold start every time.
+
+By default the **🎖 Marshal** routes each task to the best agent: it continues one
+whose context already fits the repo (**reusing its session**) or spins up a fresh
+one when nothing fits. You can override the auto-assign on dispatch — pin a specific
+person (agents that **know this repo** are surfaced first) or force a **🆕 New
+agent**.
+
+**Why it saves tokens:** reusing an agent resumes its prior Claude session, so it
+keeps everything it already learned about the codebase instead of re-reading the
+file tree and re-exploring from scratch. That skipped re-exploration is real token
+(and wall-clock) savings on every follow-up — the more context an agent has built,
+the more a reuse saves over a cold start. Squadron only reuses when it actually
+pays off: a session must be **recent** (≤ 12h), **healthy**, and from a
+repo-exploring task (`plan` / `errand`) to be eligible — past that, replaying a
+stale, bloated transcript can cost *more* than the re-exploration it saves, so it
+cold-starts instead. Either way each task runs in its own **fresh, isolated
+worktree**, and if a saved session was pruned from disk the run transparently falls
+back to a cold start.
+
+When an agent is done, **dismiss** it from the Agents panel — individually with `×`
+or in bulk via **Clear N inactive** — to reclaim its worktree and history. Only
+inactive agents (finished, cancelled, errored, or interrupted) can be dismissed; a
+live run is never touched.
+
 ## Live preview before you push
 
 From any Ready-to-Review change, **▶ Start** runs that worktree's dev command and streams
@@ -132,6 +163,12 @@ agent run.
   **Ready to Review** and push to open the PR when it's right
 - **Quick tasks (errands)** — skip the plan: tell a docked agent to do something small,
   chat with it as it works, and its changes land in Ready to Review like any other run
+- **Reuse agents to save tokens** — agents are persistent persons with a callsign; the
+  **Marshal** auto-assigns the best one, **resuming its Claude session** so a follow-up
+  keeps the context it already built instead of cold-starting — pin a person or force a
+  fresh agent anytime
+- **Dismiss inactive agents** — clear finished / cancelled / errored agents one-by-one or
+  in bulk to reclaim their worktrees and history
 - **Live preview before push** — from a Ready-to-Review change, **▶ Start** runs that
   worktree's dev command (auto-detected: npm / go / cargo / make / python, or set your own)
   and streams logs; web URLs embed in an iframe, other processes just run
@@ -225,7 +262,8 @@ Open **http://localhost:5173**. To preview with demo data (no real repos touched
 | 11 | Quick tasks (errands) — plan-less docked agent → Ready to Review | ✅ |
 | 12 | CI status rollup + agent-driven CI fix / conflict resolution | ✅ |
 | 13 | Usage gauge + desktop notifications | ✅ |
-| 14 | Parallel agents panel + run history | ⏳ |
+| 14 | Reusable agents (Marshal auto-assign, session reuse) + dismiss inactive | ✅ |
+| 15 | Parallel agents panel + run history | ⏳ |
 
 ## License
 

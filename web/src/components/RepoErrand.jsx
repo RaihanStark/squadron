@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { api } from '../api.js'
+import { assignmentOpts } from '../agents.js'
+import AgentPicker from './AgentPicker.jsx'
 import Markdown from './Markdown.jsx'
 import StatusBadge from './StatusBadge.jsx'
 
@@ -12,6 +14,7 @@ export default function RepoErrand({ repo, tasks, onStart, onOpenChanges }) {
   const [text, setText] = useState('')
   const [busy, setBusy] = useState(false)
   const [composing, setComposing] = useState(false) // force the launcher even when a finished errand lingers
+  const [assignTo, setAssignTo] = useState('auto') // 'auto' (Marshal) | 'new'
   const logRef = useRef(null)
 
   const errands = tasks
@@ -25,8 +28,8 @@ export default function RepoErrand({ repo, tasks, onStart, onOpenChanges }) {
   const showStaged = !showChat && staged && !composing
   const showLauncher = !showChat && !showStaged
 
-  // Fresh repo → reset the composer.
-  useEffect(() => { setComposing(false); setText('') }, [repo.nameWithOwner])
+  // Fresh repo → reset the composer; default to letting the Marshal auto-assign.
+  useEffect(() => { setComposing(false); setText(''); setAssignTo('auto') }, [repo.nameWithOwner])
   useEffect(() => { if (logRef.current) logRef.current.scrollTop = logRef.current.scrollHeight }, [live?.events?.length, live?.status, live?.streaming])
 
   const idle = live?.status === 'errand_idle'
@@ -44,7 +47,7 @@ export default function RepoErrand({ repo, tasks, onStart, onOpenChanges }) {
     const t = text.trim()
     if (!t) return
     setBusy(true)
-    try { await onStart(repo, t); setText(''); setComposing(false) }
+    try { await onStart(repo, t, assignmentOpts(assignTo)); setText(''); setComposing(false) }
     catch (e) { alert('Failed to start: ' + e.message) }
     finally { setBusy(false) }
   }
@@ -74,6 +77,8 @@ export default function RepoErrand({ repo, tasks, onStart, onOpenChanges }) {
     <aside className="repo-chat">
       <div className="repo-chat-head">
         <span>🤖 Quick task</span>
+        {showChat && live.agentName && <span className="badge agent-badge" title="The agent (person) on this task">🎖 {live.agentName}</span>}
+        {showChat && live.resumed && <span className="badge resume-badge" title="Continued an existing agent — reusing its context to save tokens">↺ continued</span>}
         {showChat && <StatusBadge status={live.status} />}
       </div>
 
@@ -87,6 +92,7 @@ export default function RepoErrand({ repo, tasks, onStart, onOpenChanges }) {
             onChange={(e) => setText(e.target.value)}
             onKeyDown={onEnter(start)}
           />
+          <AgentPicker compact value={assignTo} onChange={setAssignTo} />
           <button className="dispatch" disabled={busy || !text.trim()} onClick={start}>
             {busy ? 'Starting…' : 'Run quick task ↵'}
           </button>
