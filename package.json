@@ -61,6 +61,9 @@
       "icon": "build/icon.png",
       "maintainer": "RaihanStark <dev@byraihan.com>",
       "synopsis": "Command Claude agents across your GitHub repos"
+    },
+    "rpm": {
+      "afterRemove": "build/rpm-afterremove.sh"
     }
   }
 }
