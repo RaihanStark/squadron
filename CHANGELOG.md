@@ -6,6 +6,39 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-06-29
+
+### Added
+
+- **Verifier subagent.** A Bash-capable verifier specialist now runs the
+  project's tests, build, and lint and returns a concise PASS/FAIL verdict, so
+  the lead agent gets an independent check on its own work instead of trusting
+  its summary. Verifier delegation is wired into the runner prompts.
+- **Scout subagent on a cheaper model.** A read-only `scout` subagent (Haiku)
+  handles delegated codebase exploration, letting the lead agent fan out
+  searches to a cheaper, faster model and save tokens on every run. Subagent
+  activity renders as indented junior-rank lines without clobbering the lead
+  agent's stream.
+- **System status bar.** A new bottom-right pill polls `/api/status` every
+  minute and reports `gh` auth status and Claude Code subscription (Max/Pro)
+  health, revealing per-check details on hover or click.
+
+### Changed
+
+- **Subagents gated by permission mode.** Planning sessions are restricted to
+  the read-only scout via `subagentsFor()`, while write-capable runs get the
+  full subagent set including the verifier.
+- **Forced submit tool calls replace regex JSON scraping.** The Marshal
+  (`submit_choice`), change namer (`submit_change_name`), and PR reviewer
+  (`submit_review`) now return validated arguments through typed submit tools
+  instead of fenced-JSON regex parsing — more reliable structured output and
+  fewer tokens. Drops `parseChoice`, `parseChangeName`, and `parseReview`.
+
+### Fixed
+
+- Show **Create PR** and the other "your move" actions (not just Cancel) when an
+  agent reaches that state after a successful run (#46).
+
 ## [0.3.0] - 2026-06-29
 
 ### Added
