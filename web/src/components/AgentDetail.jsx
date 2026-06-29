@@ -34,7 +34,9 @@ export default function AgentDetail({ task, onOpenChanges }) {
   const planning = task.status === 'planning'   // planner is thinking
   const planned = task.status === 'planned'     // plan ready, awaiting you
   const reviewed = task.status === 'reviewed'   // review ready, awaiting you
-  const canChat = planning || planned || waiting
+  const isErrand = task.kind === 'errand' || task.kind === 'pr_fix' // plan-less quick task
+  const idle = task.status === 'errand_idle'    // errand finished a turn, your move
+  const canChat = planning || planned || waiting || idle
   const busy = ACTIVE.has(task.status)
 
   async function send() {
@@ -54,8 +56,16 @@ export default function AgentDetail({ task, onOpenChanges }) {
     finally { setApproving(false) }
   }
 
+  async function stage() {
+    setApproving(true)
+    try { await post('stage') } catch (e) { alert('Stage failed: ' + e.message) }
+    finally { setApproving(false) }
+  }
+
   const placeholder = waiting
     ? 'Answer the question — the agent is paused…'
+    : idle
+    ? 'Send a follow-up, or stage the changes above. (⌘/Ctrl+Enter)'
     : 'Refine the plan — e.g. “use Argon2id, not the keyring” (⌘/Ctrl+Enter)'
 
   return (
@@ -71,7 +81,7 @@ export default function AgentDetail({ task, onOpenChanges }) {
           {task.resumed && <span className="badge resume-badge" title="Continued an existing agent — reusing its context to save tokens">↺ continued</span>}
           {task.model && <span className="badge model-badge">{task.model}</span>}
           {task.branch && <span className="badge">{task.branch}</span>}
-          {busy && task.status !== 'changes_ready' && <button className="cancel" onClick={() => post('cancel')}>Cancel</button>}
+          {busy && task.status !== 'changes_ready' && <button className="cancel" onClick={() => post('cancel')}>{isErrand ? 'Discard' : 'Cancel'}</button>}
           {task.status === 'changes_ready' && onOpenChanges && (
             <button className="approve-btn" onClick={() => onOpenChanges(task.id)}>Review changes →</button>
           )}
@@ -125,6 +135,14 @@ export default function AgentDetail({ task, onOpenChanges }) {
               <span className="muted">Plan ready. Refine it below, or send it to execution.</span>
               <button className="approve-btn" disabled={approving} onClick={approve}>
                 {approving ? 'Dispatching…' : '✅ Approve & Dispatch'}
+              </button>
+            </div>
+          )}
+          {idle && isErrand && (
+            <div className="approve-row">
+              <span className="muted">Agent finished. Stage the changes for review, or send a follow-up.</span>
+              <button className="approve-btn" disabled={approving} onClick={stage}>
+                {approving ? 'Staging…' : '✅ Stage for review'}
               </button>
             </div>
           )}
