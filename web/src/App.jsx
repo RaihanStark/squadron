@@ -230,6 +230,7 @@ export default function App() {
       <header className="topbar">
         <span className="logo">🛩 Squadron</span>
         <span className="tagline">command your fleet</span>
+        <span className="version">v{__APP_VERSION__}</span>
         <button
           className={`agents-toggle ${view === 'agents' ? 'on' : ''} ${waitingCount ? 'needs-you' : ''}`}
           onClick={() => setView(view === 'agents' ? 'repo' : 'agents')}

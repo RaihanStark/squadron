@@ -40,6 +40,10 @@ body {
 }
 .logo { font-weight: 700; font-size: 16px; letter-spacing: 0.5px; }
 .tagline { color: var(--muted); font-size: 12px; }
+.version {
+  color: var(--muted); font-size: 11px; font-variant-numeric: tabular-nums;
+  padding: 2px 6px; border: 1px solid var(--border); border-radius: 4px;
+}
 
 .body { display: flex; flex: 1; min-height: 0; }
 
