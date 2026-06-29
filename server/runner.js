@@ -99,7 +99,7 @@ ${tree.list}
 Guidelines:
 - You are already at the repository root. Use relative paths only; never cd elsewhere or touch other locations — those attempts are blocked and waste turns.
 - Work in parallel: when reading or grepping several files, issue those tool calls together in one step.
-- Delegate aggressively — it's faster and cheaper: make the \`scout\` subagent (Task tool) your DEFAULT for ALL read-only work — searching the codebase, locating symbols or usages, reading or summarizing files, checking how something is used. Strongly prefer spawning a scout over reading files yourself, even for small lookups, and fan out several in parallel for independent questions. Keep your own turns for edits and decisions.
+- Delegate aggressively — it's faster and cheaper: make the \`scout\` subagent (Task tool) your DEFAULT for ALL read-only work — searching the codebase, locating symbols or usages, reading or summarizing files, checking how something is used. Strongly prefer spawning a scout over reading files yourself, even for small lookups, and fan out several in parallel for independent questions. And dispatch the \`verifier\` subagent (Task tool) to run tests, build, or lint rather than running them yourself — it returns just a PASS/FAIL verdict, keeping the verbose logs out of your context. Keep your own turns for edits and decisions.
 - Match the project's existing style and conventions. Run commands (build, tests, version bumps) in the worktree as needed.
 - Do NOT commit, push, or open a pull request — the operator reviews and stages your changes.
 - The operator may send follow-up instructions to refine the work, so keep going until they're satisfied.
@@ -122,7 +122,7 @@ ${instruction}
 Guidelines:
 - You are already at the repository root. Use relative paths only; never cd elsewhere or touch other locations — those attempts are blocked and waste turns.
 - Reuse what you already know; only read files you haven't seen or need to re-check. Work in parallel when you do read or grep several files.
-- Delegate aggressively — it's faster and cheaper: make the \`scout\` subagent (Task tool) your DEFAULT for ALL read-only work — searching the codebase, locating symbols or usages, reading or summarizing files, checking how something is used. Strongly prefer spawning a scout over reading files yourself, even for small lookups, and fan out several in parallel for independent questions. Keep your own turns for edits and decisions.
+- Delegate aggressively — it's faster and cheaper: make the \`scout\` subagent (Task tool) your DEFAULT for ALL read-only work — searching the codebase, locating symbols or usages, reading or summarizing files, checking how something is used. Strongly prefer spawning a scout over reading files yourself, even for small lookups, and fan out several in parallel for independent questions. And dispatch the \`verifier\` subagent (Task tool) to run tests, build, or lint rather than running them yourself — it returns just a PASS/FAIL verdict, keeping the verbose logs out of your context. Keep your own turns for edits and decisions.
 - Match the project's existing style and conventions. Run commands (build, tests, version bumps) in the worktree as needed.
 - Do NOT commit, push, or open a pull request — the operator reviews and stages your changes.
 - The operator may send follow-up instructions to refine the work, so keep going until they're satisfied.
@@ -145,7 +145,7 @@ ${tree.list}
 Guidelines:
 - You are already at the repository root. Use relative paths only; never cd elsewhere or touch other locations — those attempts are blocked and waste turns.
 - Work in parallel: when reading or grepping several files, issue those tool calls together in one step.
-- Delegate aggressively — it's faster and cheaper: make the \`scout\` subagent (Task tool) your DEFAULT for ALL read-only work — searching the codebase, locating symbols or usages, reading or summarizing files, checking how something is used. Strongly prefer spawning a scout over reading files yourself, even for small lookups, and fan out several in parallel for independent questions. Keep your own turns for edits and decisions.
+- Delegate aggressively — it's faster and cheaper: make the \`scout\` subagent (Task tool) your DEFAULT for ALL read-only work — searching the codebase, locating symbols or usages, reading or summarizing files, checking how something is used. Strongly prefer spawning a scout over reading files yourself, even for small lookups, and fan out several in parallel for independent questions. And dispatch the \`verifier\` subagent (Task tool) to run tests, build, or lint rather than running them yourself — it returns just a PASS/FAIL verdict, keeping the verbose logs out of your context. Keep your own turns for edits and decisions.
 - Match the project's existing style and conventions. Run the test suite if there is one.
 - Do NOT commit, push, or open a pull request — the operator reviews and stages your changes, which then push back to this PR's branch.
 - The operator may send follow-up instructions to refine the work, so keep going until they're satisfied.
@@ -164,7 +164,7 @@ ${plan}
 Guidelines:
 - You are already at the repository root. Use relative paths only; never cd elsewhere or touch other locations — those attempts are blocked and waste turns.
 - Work in parallel: when reading or grepping several files, issue those tool calls together in one step, not one at a time.
-- Delegate aggressively — it's faster and cheaper: make the \`scout\` subagent (Task tool) your DEFAULT for ALL read-only work — searching the codebase, locating symbols or usages, reading or summarizing files, checking how something is used. Strongly prefer spawning a scout over reading files yourself, even for small lookups, and fan out several in parallel for independent questions. Keep your own turns for edits and decisions.
+- Delegate aggressively — it's faster and cheaper: make the \`scout\` subagent (Task tool) your DEFAULT for ALL read-only work — searching the codebase, locating symbols or usages, reading or summarizing files, checking how something is used. Strongly prefer spawning a scout over reading files yourself, even for small lookups, and fan out several in parallel for independent questions. And dispatch the \`verifier\` subagent (Task tool) to run tests, build, or lint rather than running them yourself — it returns just a PASS/FAIL verdict, keeping the verbose logs out of your context. Keep your own turns for edits and decisions.
 - Match the project's existing style and conventions.
 - If there's a test suite, run it; add or update tests where sensible.
 - Only call the \`ask_user\` tool if a wrong guess would be expensive or irreversible.
@@ -909,7 +909,7 @@ Guidelines:
 - You are already at the repo root. Use relative paths only; never cd elsewhere or touch other locations — those attempts are blocked and waste turns.
 - Investigate the failure first (read the implicated files/tests), then make the smallest correct fix.
 - Work in parallel: when reading or grepping several files, issue those tool calls together in one step.
-- Delegate aggressively — it's faster and cheaper: make the \`scout\` subagent (Task tool) your DEFAULT for reading the implicated files, searching the codebase, and tracing the failure. Strongly prefer spawning a scout over reading files yourself, even for small lookups, and fan out several in parallel for independent questions. Keep your own turns for the fix itself.
+- Delegate aggressively — it's faster and cheaper: make the \`scout\` subagent (Task tool) your DEFAULT for reading the implicated files, searching the codebase, and tracing the failure. Strongly prefer spawning a scout over reading files yourself, even for small lookups, and fan out several in parallel for independent questions. Dispatch the \`verifier\` subagent (Task tool) to re-run the failing checks and confirm they pass, rather than running them yourself. Keep your own turns for the fix itself.
 - Match the project's existing style and conventions. If there's a test suite, run it to confirm the build is green before finishing.
 - Do NOT commit, push, or open a PR — the harness handles git. Leave your finished changes saved in the working tree.
 - End with a 2-4 sentence summary of what was failing and how you fixed it.`
@@ -1116,7 +1116,7 @@ Guidelines:
 - Build on the existing changes; make the requested adjustments in the working tree.
 - You are already at the repo root. Relative paths only; never cd elsewhere — blocked.
 - Work in parallel: batch independent reads/greps into one step.
-- Delegate aggressively — it's faster and cheaper: make the \`scout\` subagent (Task tool) your DEFAULT for ALL read-only work — searching the codebase, locating symbols or usages, reading or summarizing files. Strongly prefer spawning a scout over reading files yourself, even for small lookups, and fan out several in parallel for independent questions. Keep your own turns for edits and decisions.
+- Delegate aggressively — it's faster and cheaper: make the \`scout\` subagent (Task tool) your DEFAULT for ALL read-only work — searching the codebase, locating symbols or usages, reading or summarizing files. Strongly prefer spawning a scout over reading files yourself, even for small lookups, and fan out several in parallel for independent questions. And dispatch the \`verifier\` subagent (Task tool) to run tests, build, or lint rather than running them yourself — it returns just a PASS/FAIL verdict, keeping the verbose logs out of your context. Keep your own turns for edits and decisions.
 - Do NOT commit, push, or open a PR — the harness handles git.
 - End with a short summary of what you changed in this revision.`
 }
