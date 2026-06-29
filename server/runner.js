@@ -193,8 +193,8 @@ export async function startErrand(task, { instruction, defaultBranch, resume } =
   const { id, owner, repo, model } = task
   const text = instruction || task.body || task.issueTitle
   try {
-    await updateTask(id, { status: 'preparing' })
-    if (resume) addEvent(id, { kind: 'status', text: 'Reusing a prior agent — resuming its session…' })
+    await updateTask(id, { status: 'preparing', ...(resume ? { resumed: true } : {}) })
+    if (resume) addEvent(id, { kind: 'status', text: "Continuing this repo's recent agent — reusing its context to save tokens." })
     addEvent(id, { kind: 'status', text: 'Preparing isolated worktree…' })
     const { path: wt, branch, base } = await git.createWorktree(owner, repo, id, defaultBranch)
     await updateTask(id, { branch, base, status: 'running' })

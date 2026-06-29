@@ -191,32 +191,16 @@ export default function App() {
   }
 
   // Plan-less "quick task": create an errand and surface it in the repo sidebar.
-  async function startErrand(repoObj, instruction) {
+  // By default it seamlessly continues this repo's recent agent (reusing context
+  // to save tokens); `opts.fresh` forces a clean session.
+  async function startErrand(repoObj, instruction, opts = {}) {
     const [owner, repo] = repoObj.nameWithOwner.split('/')
     const task = await api(`/api/repos/${owner}/${repo}/errand`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ instruction, defaultBranch: repoObj.defaultBranchRef?.name }),
+      body: JSON.stringify({ instruction, defaultBranch: repoObj.defaultBranchRef?.name, fresh: !!opts.fresh }),
     })
     setTasks((prev) => ({ ...prev, [task.id]: { ...(prev[task.id] || {}), ...task, events: prev[task.id]?.events || [] } }))
     return task
-  }
-
-  // Reuse a finished/inactive agent: spin up a fresh quick task that RESUMES its
-  // Claude session, so the agent keeps the codebase context it already built
-  // instead of cold-starting and re-exploring (saves the re-discovery tokens).
-  async function reuseTask(task) {
-    const instruction = prompt(`Reuse this agent on ${task.owner}/${task.repo} — it keeps what it already learned. New task:`)
-    if (!instruction?.trim()) return
-    const repoObj = repos.find((r) => r.nameWithOwner === `${task.owner}/${task.repo}`)
-    try {
-      const next = await api(`/api/repos/${task.owner}/${task.repo}/errand`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ instruction: instruction.trim(), fromTaskId: task.id, defaultBranch: repoObj?.defaultBranchRef?.name }),
-      })
-      setTasks((prev) => ({ ...prev, [next.id]: { ...(prev[next.id] || {}), ...next, events: prev[next.id]?.events || [] } }))
-      setSelectedTask(next.id)
-      setView('agents')
-    } catch (e) { alert('Could not reuse agent: ' + e.message) }
   }
 
   // Dismiss a finished/inactive agent — frees its worktree and drops its history.
@@ -293,7 +277,7 @@ export default function App() {
         <main className="main">
           {view === 'agents' ? (
             <AgentsPanel tasks={taskList} selected={selectedTask} setSelected={setSelectedTask} onOpenChanges={openChanges}
-              onDismiss={dismissTask} onClearInactive={clearInactiveTasks} onReuse={reuseTask} />
+              onDismiss={dismissTask} onClearInactive={clearInactiveTasks} />
           ) : view === 'issue' && selectedIssue ? (
             <IssueDetail repo={selectedIssue.repo} issue={selectedIssue.issue} me={me}
               task={findTask((t) => `${t.owner}/${t.repo}` === selectedIssue.repo.nameWithOwner && (t.kind || 'plan') !== 'review' && t.issueNumber == (selectedIssue.issue.number ?? selectedIssue.issue.id))}

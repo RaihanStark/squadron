@@ -12,7 +12,7 @@ import * as preview from './preview.js'
 import * as usage from './usage.js'
 import * as runConfig from './runConfig.js'
 import * as selectedRepos from './selectedRepos.js'
-import { bus, listTasks, getTask, createTask, findActiveByIssue } from './tasks.js'
+import { bus, listTasks, getTask, createTask, findActiveByIssue, findResumableAgent } from './tasks.js'
 
 const app = express()
 const PORT = process.env.PORT || 5174
@@ -219,18 +219,17 @@ app.post('/api/repos/:owner/:repo/resolve', handle(async (req) => {
 // Ready to Review without the plan/approve ceremony. Streams over /api/stream.
 app.post('/api/repos/:owner/:repo/errand', handle(async (req) => {
   const { owner, repo } = req.params
-  const { instruction, model, defaultBranch, fromTaskId } = req.body || {}
+  const { instruction, model, defaultBranch, fresh } = req.body || {}
   const text = (instruction || '').trim()
   if (!text) throw new Error('instruction is required')
-  // Reuse: continue an inactive agent's session so it keeps the codebase context
-  // it already built. Inherit that agent's model so the resumed session matches.
+  // Seamless token-saving: by default, continue this repo's most recent healthy
+  // quick-task agent so it keeps the codebase context it already built (no cold
+  // re-exploration). Inherit its model so the resumed session matches. `fresh:
+  // true` opts out for a clean slate.
   let resume = null, useModel = model
-  if (fromTaskId) {
-    const src = await getTask(fromTaskId)
-    if (!src?.sessionId) throw new Error('that agent has no resumable session')
-    if (src.owner !== owner || src.repo !== repo) throw new Error('agent belongs to a different repo')
-    resume = src.sessionId
-    useModel = model || src.model
+  if (!fresh) {
+    const warm = await findResumableAgent(owner, repo)
+    if (warm) { resume = warm.sessionId; useModel = model || warm.model }
   }
   const task = await createTask({
     owner, repo, issueNumber: null, issueTitle: text.slice(0, 80), kind: 'errand', local: true, body: text, model: useModel,

@@ -2,7 +2,7 @@ import { isInactive } from '../constants.js'
 import StatusBadge from './StatusBadge.jsx'
 import AgentDetail from './AgentDetail.jsx'
 
-export default function AgentsPanel({ tasks, selected, setSelected, onOpenChanges, onDismiss, onClearInactive, onReuse }) {
+export default function AgentsPanel({ tasks, selected, setSelected, onOpenChanges, onDismiss, onClearInactive }) {
   const sel = tasks.find((t) => t.id === selected) || tasks[0]
   const inactiveCount = tasks.filter((t) => isInactive(t.status)).length
   return (
@@ -27,13 +27,6 @@ export default function AgentsPanel({ tasks, selected, setSelected, onOpenChange
               <span className="title">{t.repo} <span className="muted">{t.issueNumber ? `#${t.issueNumber}` : '⚡'}</span></span>
               <span className="agent-row-actions">
                 <StatusBadge status={t.status} />
-                {isInactive(t.status) && t.sessionId && onReuse && (
-                  <button
-                    className="agent-reuse"
-                    title="Reuse this agent — start a new task that keeps the context it already built"
-                    onClick={(e) => { e.stopPropagation(); onReuse(t) }}
-                  >♻</button>
-                )}
                 {isInactive(t.status) && onDismiss && (
                   <button
                     className="agent-dismiss"

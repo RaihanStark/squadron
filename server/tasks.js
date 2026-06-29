@@ -87,6 +87,32 @@ export async function findActiveByIssue(owner, repo, number, kind = 'plan') {
   return null
 }
 
+// Terminal statuses whose Claude session finished cleanly and is now dormant (no
+// live handle), so it's safe to resume and continue with the context it built.
+// Excludes 'error'/'interrupted' (the session may be mid-tool or broken).
+const RESUMABLE_STATUS = new Set(['pr_open', 'no_changes', 'review_posted', 'cancelled'])
+
+// How recently a reusable agent must have run to auto-continue it. Past this we
+// cold-start instead: the repo has likely drifted and replaying a stale, bloated
+// transcript can cost more than the re-exploration it saves.
+const RESUME_MAX_AGE_MS = 12 * 60 * 60 * 1000 // 12h
+
+// The most recent quick-task (errand) agent for this repo whose session we can
+// resume to pick up where it left off — keeping its codebase context so a new
+// task doesn't cold-start. Returns null when nothing qualifies (→ fresh session).
+export async function findResumableAgent(owner, repo, now = Date.now()) {
+  await load()
+  let best = null
+  for (const t of tasks.values()) {
+    if (t.owner !== owner || t.repo !== repo) continue
+    if ((t.kind || 'plan') !== 'errand' || !t.sessionId) continue
+    if (!RESUMABLE_STATUS.has(t.status)) continue
+    if (now - (t.createdAt || 0) > RESUME_MAX_AGE_MS) continue
+    if (!best || (t.createdAt || 0) > (best.createdAt || 0)) best = t
+  }
+  return best
+}
+
 export async function createTask({ owner, repo, issueNumber, issueTitle, model, kind = 'plan', local = false, body = null }) {
   await load()
   const id = randomUUID().slice(0, 8)

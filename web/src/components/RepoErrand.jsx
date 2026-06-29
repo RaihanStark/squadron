@@ -12,6 +12,7 @@ export default function RepoErrand({ repo, tasks, onStart, onOpenChanges }) {
   const [text, setText] = useState('')
   const [busy, setBusy] = useState(false)
   const [composing, setComposing] = useState(false) // force the launcher even when a finished errand lingers
+  const [fresh, setFresh] = useState(false) // opt out of continuing this repo's recent agent
   const logRef = useRef(null)
 
   const errands = tasks
@@ -26,7 +27,9 @@ export default function RepoErrand({ repo, tasks, onStart, onOpenChanges }) {
   const showLauncher = !showChat && !showStaged
 
   // Fresh repo → reset the composer.
-  useEffect(() => { setComposing(false); setText('') }, [repo.nameWithOwner])
+  useEffect(() => { setComposing(false); setText(''); setFresh(false) }, [repo.nameWithOwner])
+  // Is there a recent agent here whose context a new task would continue?
+  const hasWarm = errands.some((t) => t.sessionId && ['pr_open', 'no_changes', 'review_posted', 'cancelled'].includes(t.status))
   useEffect(() => { if (logRef.current) logRef.current.scrollTop = logRef.current.scrollHeight }, [live?.events?.length, live?.status, live?.streaming])
 
   const idle = live?.status === 'errand_idle'
@@ -44,7 +47,7 @@ export default function RepoErrand({ repo, tasks, onStart, onOpenChanges }) {
     const t = text.trim()
     if (!t) return
     setBusy(true)
-    try { await onStart(repo, t); setText(''); setComposing(false) }
+    try { await onStart(repo, t, { fresh }); setText(''); setComposing(false) }
     catch (e) { alert('Failed to start: ' + e.message) }
     finally { setBusy(false) }
   }
@@ -74,6 +77,7 @@ export default function RepoErrand({ repo, tasks, onStart, onOpenChanges }) {
     <aside className="repo-chat">
       <div className="repo-chat-head">
         <span>🤖 Quick task</span>
+        {showChat && live.resumed && <span className="badge resume-badge" title="Continued this repo's recent agent — reusing its context to save tokens">↺ continued</span>}
         {showChat && <StatusBadge status={live.status} />}
       </div>
 
@@ -90,6 +94,12 @@ export default function RepoErrand({ repo, tasks, onStart, onOpenChanges }) {
           <button className="dispatch" disabled={busy || !text.trim()} onClick={start}>
             {busy ? 'Starting…' : 'Run quick task ↵'}
           </button>
+          {hasWarm && (
+            <label className="errand-fresh" title="By default a quick task continues this repo's most recent agent, reusing its context to save tokens.">
+              <input type="checkbox" checked={fresh} onChange={(e) => setFresh(e.target.checked)} />
+              <span>Start fresh <span className="muted">— ignore the recent agent's saved context</span></span>
+            </label>
+          )}
         </div>
       )}
 
