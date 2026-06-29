@@ -1,5 +1,6 @@
 // Task lifecycle: interactive PLAN (read-only chat) → operator approves →
 // one-shot EXECUTION in the same worktree → commit → push → PR.
+import { z } from 'zod'
 import * as git from './git.js'
 import * as gh from './github.js'
 import * as questions from './questions.js'
@@ -713,44 +714,11 @@ The complete diff is provided below — that is your primary material. You may r
 
 Review the diff for correctness bugs, security issues, and clear quality problems. Be specific, concise, and fair — skip nitpicks unless they matter.
 
-End your reply with EXACTLY ONE fenced \`\`\`json code block and nothing after it, of the form:
-{
-  "summary": "<1-2 sentence overall assessment>",
-  "findings": [
-    { "file": "<repo-relative path>", "line": <line number in the NEW file (right side of the diff) this comment anchors to>, "severity": "bug" | "security" | "quality", "body": "<the problem and a concrete suggested fix>" }
-  ]
-}
-Use NEW-file line numbers (the right side of the diff). If you find no real issues, return an empty "findings" array. You may write brief prose before the JSON block, but the JSON block is what matters.
+When done, call the submit_review tool with your assessment: a 1-2 sentence summary and a findings array (empty if you find no real issues). Anchor each finding to a NEW-file line number (the right side of the diff).
 
 --- DIFF ---
 ${diff}
 --- END DIFF ---`
-}
-
-// Pull the structured review out of the agent's reply.
-function parseReview(text) {
-  const raw = String(text || '')
-  let json = null
-  const fence = raw.match(/```json\s*([\s\S]*?)```/i)
-  if (fence) json = fence[1]
-  else {
-    const obj = raw.match(/\{[\s\S]*"findings"[\s\S]*\}/)
-    if (obj) json = obj[0]
-  }
-  const stripped = raw.replace(/```json[\s\S]*?```/i, '').trim()
-  if (json) {
-    try {
-      const p = JSON.parse(json.trim())
-      const findings = Array.isArray(p.findings) ? p.findings.map((f) => ({
-        file: String(f.file || ''),
-        line: Number.isFinite(Number(f.line)) ? Number(f.line) : null,
-        severity: String(f.severity || 'quality'),
-        body: String(f.body || ''),
-      })) : []
-      return { summary: (String(p.summary || '').trim() || stripped), findings }
-    } catch { /* fall through */ }
-  }
-  return { summary: stripped, findings: [] }
 }
 
 // RIGHT-side (new-file) line numbers that are commentable, per file path —
@@ -810,6 +778,28 @@ export async function startReview(task) {
       prompt: reviewPrompt(owner, repo, pr, diff),
       cwd: wt, model, signal: ac.signal,
       onEvent: (e) => e.kind === 'delta' ? streamText(id, e.text) : addEvent(id, e),
+      output: {
+        name: 'submit_review',
+        description: 'Submit your code review: an overall summary and a list of findings (empty if none).',
+        schema: {
+          summary: z.string().describe('1-2 sentence overall assessment'),
+          findings: z.array(z.object({
+            file: z.string().describe('repo-relative path'),
+            line: z.number().nullable().describe('line number in the NEW file (right side of the diff) this comment anchors to'),
+            severity: z.enum(['bug', 'security', 'quality']).describe('severity of the finding'),
+            body: z.string().describe('the problem and a concrete suggested fix'),
+          })).describe('findings; empty array if no real issues'),
+        },
+        normalize: (p) => ({
+          summary: String(p.summary || '').trim(),
+          findings: Array.isArray(p.findings) ? p.findings.map((f) => ({
+            file: String(f.file || ''),
+            line: Number.isFinite(Number(f.line)) ? Number(f.line) : null,
+            severity: String(f.severity || 'quality'),
+            body: String(f.body || ''),
+          })) : [],
+        }),
+      },
     })
 
     await git.removeWorktree(owner, repo, id) // review captured; no further fs needed
@@ -818,7 +808,7 @@ export async function startReview(task) {
       sessions.delete(id)
       return
     }
-    const { summary, findings } = parseReview(res.summary)
+    const { summary, findings } = res.output || { summary: (res.summary || '').trim(), findings: [] }
     await updateTask(id, { status: 'reviewed', review: summary, findings, costUsd: res.costUsd })
     addEvent(id, { kind: 'status', text: `Review ready — ${findings.length} finding(s). Approve to post to the PR.` })
   } catch (err) {
