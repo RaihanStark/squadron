@@ -188,6 +188,10 @@ export function demoApi(path, opts) {
     },
     fetchedAt: now,
   })
+  if (path === '/api/status') return Promise.resolve({
+    gh: { ok: true, user: 'acme' },
+    claude: { ok: true, installed: true, plan: 'max 5x' },
+  })
   if (/\/preview$/.test(path)) return Promise.resolve({ status: 'stopped', url: null, logs: [], command: 'npm run dev', source: 'detected' })
   if (/\/run-command$/.test(path)) return Promise.resolve({ command: null })
   if (/\/issues\//.test(path) && opts?.method === 'PATCH') {

@@ -11,6 +11,7 @@ import AgentsPanel from './components/AgentsPanel.jsx'
 import IssueDetail from './components/IssueDetail.jsx'
 import ChangesDetail from './components/ChangesDetail.jsx'
 import PrDetail from './components/PrDetail.jsx'
+import StatusBar from './components/StatusBar.jsx'
 
 export default function App() {
   const [repos, setRepos] = useState([])
@@ -327,6 +328,8 @@ export default function App() {
           )}
         </main>
       </div>
+
+      <StatusBar />
     </div>
   )
 }

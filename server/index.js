@@ -10,6 +10,7 @@ import * as git from './git.js'
 import * as localIssues from './localIssues.js'
 import * as preview from './preview.js'
 import * as usage from './usage.js'
+import * as status from './status.js'
 import * as runConfig from './runConfig.js'
 import * as selectedRepos from './selectedRepos.js'
 import { bus, listTasks, getTask, createTask, findActiveByIssue, resolveAssignment, listAgents, addEvent } from './tasks.js'
@@ -51,6 +52,10 @@ app.get('/api/me', handle(async () => ({ login: await github.currentUser() })))
 // Live Claude subscription usage (the numbers `/usage` shows). Reads the user's
 // Claude Code login token — see server/usage.js.
 app.get('/api/usage', handle(() => usage.get()))
+
+// System status for the bottom status bar: GitHub CLI auth + Claude Code login
+// and subscription. See server/status.js.
+app.get('/api/status', handle(() => status.get()))
 
 // The sidebar fleet = only the repos the user has curated. Fetch each in
 // parallel; if one was deleted/renamed its `gh repo view` throws — drop it

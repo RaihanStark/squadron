@@ -47,6 +47,43 @@ body {
 
 .body { display: flex; flex: 1; min-height: 0; }
 
+/* --- Bottom status bar (system readiness) --- */
+.statusbar {
+  flex: 0 0 auto; display: flex; align-items: center; justify-content: flex-end;
+  height: 26px; padding: 0 10px; border-top: 1px solid var(--border); background: var(--panel);
+}
+.status-pill-wrap { position: relative; }
+.status-pill {
+  display: inline-flex; align-items: center; gap: 7px;
+  background: none; border: none; color: var(--muted); cursor: pointer;
+  font-size: 11px; padding: 3px 7px; border-radius: 5px;
+}
+.status-pill:hover { background: var(--panel-2); }
+.status-pill.ok { color: var(--green); }
+.status-pill.warn { color: var(--red); }
+.status-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); flex: 0 0 auto; }
+.status-dot.ok { background: var(--green); box-shadow: 0 0 6px var(--green); }
+.status-dot.warn { background: var(--red); box-shadow: 0 0 6px var(--red); }
+.status-dot.pending { background: var(--accent); animation: pulse 1.4s ease-in-out infinite; }
+
+.status-popover {
+  position: absolute; right: 0; bottom: calc(100% + 8px); z-index: 30; width: 300px;
+  background: var(--panel); border: 1px solid var(--border); border-radius: 8px;
+  padding: 10px 12px; box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
+}
+.status-pop-head {
+  color: var(--muted); font-size: 10px; letter-spacing: 1px; text-transform: uppercase;
+  padding-bottom: 8px; border-bottom: 1px solid var(--border); margin-bottom: 6px;
+}
+.status-pop-row { display: flex; align-items: center; gap: 8px; padding: 5px 0; font-size: 12.5px; }
+.status-ico { width: 14px; text-align: center; font-weight: 700; flex: 0 0 auto; }
+.status-ico.ok { color: var(--green); }
+.status-ico.bad { color: var(--red); }
+.status-pop-label { color: var(--text); }
+.status-pop-detail {
+  margin-left: auto; padding-left: 10px; color: var(--muted); font-size: 11px; text-align: right;
+}
+
 .sidebar {
   width: 260px; border-right: 1px solid var(--border);
   background: var(--panel); overflow-y: auto; padding: 8px;
