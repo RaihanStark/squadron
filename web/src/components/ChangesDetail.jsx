@@ -2,25 +2,21 @@ import { useEffect, useRef, useState } from 'react'
 import { api } from '../api.js'
 import { usePref } from '../prefs.js'
 import { parseDiff } from '../diff.js'
-import { parseAnsi } from '../ansi.js'
 import { createResizeDrag } from '../dragResize.js'
 import DiffFile from './DiffFile.jsx'
 import ChatLine from './ChatLine.jsx'
 import Markdown from './Markdown.jsx'
 import StatusBadge from './StatusBadge.jsx'
+import PreviewDock from './PreviewDock.jsx'
 
 export default function ChangesDetail({ task, onBack }) {
   const [files, setFiles] = useState(null)
   const [error, setError] = useState(null)
   const [pushing, setPushing] = useState(false)
-  const [preview, setPreview] = useState(null)
-  const [cmd, setCmd] = useState('')
-  const [cmdDirty, setCmdDirty] = useState(false)
   const [chatText, setChatText] = useState('')
   const [sending, setSending] = useState(false)
   const [confirmingDiscard, setConfirmingDiscard] = useState(false)
   const [chatW, setChatW] = usePref('chatWidth', 400)
-  const [dockOpen, setDockOpen] = usePref('dockOpen', false)
   const logRef = useRef(null)
   const drag = useRef(null)
 
@@ -33,15 +29,6 @@ export default function ChangesDetail({ task, onBack }) {
 
   useEffect(() => { if (logRef.current) logRef.current.scrollTop = logRef.current.scrollHeight }, [task?.events?.length, task?.status, task?.streaming])
 
-  // Poll preview process state.
-  useEffect(() => {
-    if (!task) return
-    let alive = true
-    const poll = () => api(`/api/tasks/${task.id}/preview`).then((s) => { if (!alive) return; setPreview(s); setCmd((c) => (cmdDirty ? c : (s.command || ''))) }).catch(() => {})
-    poll(); const i = setInterval(poll, 1500)
-    return () => { alive = false; clearInterval(i) }
-  }, [task?.id, cmdDirty])
-
   // Drag-to-resize the chat panel. The controller guarantees the global
   // user-select lock is released on unmount — even mid-drag — so closing this
   // view can never leave inputs app-wide uneditable (issue #47).
@@ -53,12 +40,9 @@ export default function ChangesDetail({ task, onBack }) {
 
   if (!task) return <div className="empty">These changes are no longer available.</div>
 
-  const [owner, name] = `${task.owner}/${task.repo}`.split('/')
   const ready = task.status === 'changes_ready'
   const revising = ['preparing', 'running', 'committing'].includes(task.status)
   const waiting = task.status === 'waiting'
-  const pStatus = preview?.status || 'stopped'
-  const pRunning = ['preparing', 'starting', 'running'].includes(pStatus)
 
   async function push() {
     setPushing(true)
@@ -68,12 +52,6 @@ export default function ChangesDetail({ task, onBack }) {
   async function discard() {
     try { await api(`/api/tasks/${task.id}/cancel`, { method: 'POST' }); onBack() } catch (e) { alert(e.message) }
   }
-  async function startPreview() {
-    if (cmdDirty) { await api(`/api/repos/${owner}/${name}/run-command`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ command: cmd }) }).catch(() => {}); setCmdDirty(false) }
-    setDockOpen(true)
-    await api(`/api/tasks/${task.id}/preview`, { method: 'POST' }).catch((e) => alert('Start failed: ' + e.message))
-  }
-  async function stopPreview() { await api(`/api/tasks/${task.id}/preview`, { method: 'DELETE' }).catch(() => {}) }
   async function stopRevise() { await api(`/api/tasks/${task.id}/stop`, { method: 'POST' }).catch(() => {}) }
   async function send() {
     const text = chatText.trim()
@@ -146,31 +124,7 @@ export default function ChangesDetail({ task, onBack }) {
         </div>
       </div>
 
-      <div className={`ide-dock ${dockOpen ? 'open' : ''}`}>
-        <div className="dock-bar" onClick={() => setDockOpen((o) => !o)}>
-          <span className="dock-title">{dockOpen ? '▾' : '▸'} Preview &amp; Logs</span>
-          <span className="muted">{pRunning ? `running${preview?.url ? ` · ${preview.url}` : ''}` : pStatus}</span>
-        </div>
-        {dockOpen && (
-          <div className="dock-body">
-            <div className="preview-bar">
-              <input className="cmd-input" value={cmd} placeholder="run command (e.g. npm run dev, go run .)" disabled={pRunning}
-                onChange={(e) => { setCmd(e.target.value); setCmdDirty(true) }} />
-              {preview?.source && !cmdDirty && <span className="muted">{preview.source}</span>}
-              {pRunning ? <button className="cancel" onClick={stopPreview}>■ Stop</button> : <button className="approve-btn" onClick={startPreview}>▶ Start</button>}
-              {preview?.url && <a className="dispatch" href={preview.url} target="_blank" rel="noreferrer">Open {preview.url} ↗</a>}
-            </div>
-            {pRunning && !preview?.url && <div className="muted preview-note">Running — no web URL detected. A desktop app (e.g. Go/Fyne) opens its window on your machine.</div>}
-            {preview?.logs?.length ? (
-              <div className="preview-logs">
-                {preview.logs.slice(-300).map((line, i) => (
-                  <div key={i} className="log-row">{parseAnsi(line).map((s, j) => <span key={j} style={{ color: s.color || undefined, fontWeight: s.bold ? 700 : undefined }}>{s.text}</span>)}</div>
-                ))}
-              </div>
-            ) : null}
-          </div>
-        )}
-      </div>
+      <PreviewDock previewPath={`/api/tasks/${task.id}`} repoSlug={`${task.owner}/${task.repo}`} />
     </div>
   )
 }

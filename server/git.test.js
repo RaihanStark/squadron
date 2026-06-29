@@ -5,7 +5,8 @@ import { promisify } from 'node:util'
 import { mkdtemp, writeFile, rm } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
-import { conflictedFiles, mergeHasConflictMarkers, commitMerge } from './git.js'
+import { conflictedFiles, mergeHasConflictMarkers, commitMerge, prPreviewId } from './git.js'
+import { resolveCommandFor } from './preview.js'
 
 const run = promisify(execFile)
 
@@ -43,6 +44,50 @@ test('conflictedFiles lists files left unmerged by a conflicting merge', async (
     assert.deepEqual(await conflictedFiles(dir), ['file.txt'])
   } finally {
     await rm(dir, { recursive: true, force: true })
+  }
+})
+
+test('prPreviewId is deterministic and namespaced per owner/repo/number', () => {
+  assert.equal(prPreviewId('acme', 'widgets', 42), 'pr-acme__widgets-42')
+  // Stable across calls (the worktree is reused, not re-created, on restart).
+  assert.equal(prPreviewId('acme', 'widgets', 42), prPreviewId('acme', 'widgets', 42))
+  // Distinct repos / PRs never collide.
+  assert.notEqual(prPreviewId('acme', 'widgets', 42), prPreviewId('acme', 'widgets', 43))
+  assert.notEqual(prPreviewId('acme', 'widgets', 42), prPreviewId('other', 'widgets', 42))
+})
+
+test('resolveCommandFor: .squadron.json wins over auto-detection', async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'squadron-cmd-'))
+  try {
+    // A detectable npm project AND an explicit .squadron.json — the file wins.
+    await writeFile(path.join(dir, 'package.json'), JSON.stringify({ scripts: { dev: 'vite' } }))
+    await writeFile(path.join(dir, '.squadron.json'), JSON.stringify({ run: 'make serve' }))
+    assert.deepEqual(await resolveCommandFor({ wt: dir, repoSlug: 'no/such-override-xyz' }),
+      { command: 'make serve', source: '.squadron.json' })
+  } finally {
+    await rm(dir, { recursive: true, force: true })
+  }
+})
+
+test('resolveCommandFor: falls back to auto-detection, else null', async () => {
+  const npmDir = await mkdtemp(path.join(os.tmpdir(), 'squadron-cmd-'))
+  const goDir = await mkdtemp(path.join(os.tmpdir(), 'squadron-cmd-'))
+  const bareDir = await mkdtemp(path.join(os.tmpdir(), 'squadron-cmd-'))
+  try {
+    await writeFile(path.join(npmDir, 'package.json'), JSON.stringify({ scripts: { dev: 'vite' } }))
+    assert.deepEqual(await resolveCommandFor({ wt: npmDir, repoSlug: 'no/such-override-xyz' }),
+      { command: 'npm run dev', source: 'detected' })
+
+    await writeFile(path.join(goDir, 'go.mod'), 'module example.com/x\n')
+    assert.deepEqual(await resolveCommandFor({ wt: goDir, repoSlug: 'no/such-override-xyz' }),
+      { command: 'go run .', source: 'detected' })
+
+    // Nothing recognizable → no command.
+    assert.equal(await resolveCommandFor({ wt: bareDir, repoSlug: 'no/such-override-xyz' }), null)
+  } finally {
+    await rm(npmDir, { recursive: true, force: true })
+    await rm(goDir, { recursive: true, force: true })
+    await rm(bareDir, { recursive: true, force: true })
   }
 })
 

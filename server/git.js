@@ -63,6 +63,25 @@ export async function createPrWorktree(owner, repo, taskId, prNumber) {
   return { path: wt }
 }
 
+// Deterministic id (and therefore worktree path) for a PR's live preview. Stable
+// across stop/restart so the same checkout is reused rather than re-cloned.
+export const prPreviewId = (owner, repo, number) => `pr-${slug(owner, repo)}-${number}`
+
+// Detached worktree at a PR's head, kept warm for the live-preview dock. If one
+// already exists it's refreshed to the PR's latest head (the PR may have moved);
+// otherwise a fresh detached worktree is created. Returns the worktree path.
+export async function ensurePrPreviewWorktree(owner, repo, number) {
+  const id = prPreviewId(owner, repo, number)
+  const wt = worktreePath(id)
+  if (await exists(wt)) {
+    // Worktrees share the mirror's remotes, so `origin` is available here.
+    await git(['fetch', 'origin', `pull/${number}/head`], wt)
+    await git(['reset', '--hard', 'FETCH_HEAD'], wt)
+    return wt
+  }
+  return (await createPrWorktree(owner, repo, id, number)).path
+}
+
 // Writable worktree checked out at a PR's head branch, for the CI-fix flow.
 // Unlike createPrWorktree (detached, review-only), this lands on a local branch
 // so the agent's fix can be committed and pushed back to the PR's head ref.
