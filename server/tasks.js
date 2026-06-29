@@ -110,6 +110,16 @@ export async function updateTask(id, patch) {
   emit(id, { type: 'task', task: strip(t) })
 }
 
+// Drop a task from the store entirely (used to dismiss finished/inactive agents
+// and reclaim their history). Emits a 'delete' so the UI can prune it live.
+export async function deleteTask(id) {
+  if (!tasks.has(id)) return false
+  tasks.delete(id)
+  await persist()
+  emit(id, { type: 'delete' })
+  return true
+}
+
 // Push a transient partial-text update onto the bus only — NOT persisted and NOT
 // appended to the event log. It's live token streaming; the finalized 'text'
 // event is the source of truth once the turn lands.

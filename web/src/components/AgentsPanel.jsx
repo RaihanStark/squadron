@@ -1,25 +1,50 @@
+import { isInactive } from '../constants.js'
 import StatusBadge from './StatusBadge.jsx'
 import AgentDetail from './AgentDetail.jsx'
 
-export default function AgentsPanel({ tasks, selected, setSelected, onOpenChanges }) {
+export default function AgentsPanel({ tasks, selected, setSelected, onOpenChanges, onDismiss, onClearInactive, onReuse }) {
   const sel = tasks.find((t) => t.id === selected) || tasks[0]
+  const inactiveCount = tasks.filter((t) => isInactive(t.status)).length
   return (
     <div className="agents">
       <div className="agents-list">
-        <div className="sidebar-head">AGENTS {tasks.length ? `· ${tasks.length}` : ''}</div>
+        <div className="sidebar-head agents-head">
+          <span>AGENTS {tasks.length ? `· ${tasks.length}` : ''}</span>
+          {inactiveCount > 0 && onClearInactive && (
+            <button className="clear-inactive" onClick={onClearInactive} title="Dismiss finished, cancelled, errored and interrupted agents">
+              Clear {inactiveCount} inactive
+            </button>
+          )}
+        </div>
         {!tasks.length && <div className="muted pad">No agents dispatched yet. Hit ⚡ Dispatch on an issue.</div>}
         {tasks.map((t) => (
-          <button
+          <div
             key={t.id}
             className={`agent-row ${sel?.id === t.id ? 'active' : ''}`}
             onClick={() => setSelected(t.id)}
           >
             <div className="agent-row-top">
               <span className="title">{t.repo} <span className="muted">{t.issueNumber ? `#${t.issueNumber}` : '⚡'}</span></span>
-              <StatusBadge status={t.status} />
+              <span className="agent-row-actions">
+                <StatusBadge status={t.status} />
+                {isInactive(t.status) && t.sessionId && onReuse && (
+                  <button
+                    className="agent-reuse"
+                    title="Reuse this agent — start a new task that keeps the context it already built"
+                    onClick={(e) => { e.stopPropagation(); onReuse(t) }}
+                  >♻</button>
+                )}
+                {isInactive(t.status) && onDismiss && (
+                  <button
+                    className="agent-dismiss"
+                    title="Dismiss this agent"
+                    onClick={(e) => { e.stopPropagation(); onDismiss(t.id) }}
+                  >×</button>
+                )}
+              </span>
             </div>
             <span className="muted">{t.issueTitle}</span>
-          </button>
+          </div>
         ))}
       </div>
       <div className="agent-detail">

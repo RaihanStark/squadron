@@ -64,7 +64,7 @@ function makeInputQueue() {
 // Starts in plan mode but arms the skip-permissions capability so the session
 // can later flip to autonomous execution via setMode('bypassPermissions').
 // Returns handles to drive the conversation.
-export async function openSession({ cwd, model = 'opus', permissionMode = 'plan', askUser, onMessage, planModeInstructions }) {
+export async function openSession({ cwd, model = 'opus', permissionMode = 'plan', askUser, onMessage, planModeInstructions, resume }) {
   const { query, createSdkMcpServer, tool } = await sdk()
 
   const mcpServers = {}
@@ -87,6 +87,7 @@ export async function openSession({ cwd, model = 'opus', permissionMode = 'plan'
       allowDangerouslySkipPermissions: true, // arm the capability so we can flip to execute later
       hooks: makeConfineHook(cwd), // confine the agent to its worktree
       ...(planModeInstructions ? { planModeInstructions } : {}),
+      ...(resume ? { resume } : {}), // continue a prior session so its built-up context is reused, not re-paid
     },
   })
 

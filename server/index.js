@@ -219,13 +219,23 @@ app.post('/api/repos/:owner/:repo/resolve', handle(async (req) => {
 // Ready to Review without the plan/approve ceremony. Streams over /api/stream.
 app.post('/api/repos/:owner/:repo/errand', handle(async (req) => {
   const { owner, repo } = req.params
-  const { instruction, model, defaultBranch } = req.body || {}
+  const { instruction, model, defaultBranch, fromTaskId } = req.body || {}
   const text = (instruction || '').trim()
   if (!text) throw new Error('instruction is required')
+  // Reuse: continue an inactive agent's session so it keeps the codebase context
+  // it already built. Inherit that agent's model so the resumed session matches.
+  let resume = null, useModel = model
+  if (fromTaskId) {
+    const src = await getTask(fromTaskId)
+    if (!src?.sessionId) throw new Error('that agent has no resumable session')
+    if (src.owner !== owner || src.repo !== repo) throw new Error('agent belongs to a different repo')
+    resume = src.sessionId
+    useModel = model || src.model
+  }
   const task = await createTask({
-    owner, repo, issueNumber: null, issueTitle: text.slice(0, 80), kind: 'errand', local: true, body: text, model,
+    owner, repo, issueNumber: null, issueTitle: text.slice(0, 80), kind: 'errand', local: true, body: text, model: useModel,
   })
-  runner.startErrand(task, { instruction: text, defaultBranch }).catch((e) => console.error('startErrand crashed', e))
+  runner.startErrand(task, { instruction: text, defaultBranch, resume }).catch((e) => console.error('startErrand crashed', e))
   return task
 }))
 
@@ -289,6 +299,18 @@ app.get('/api/tasks/:id', handle(async (req) => {
 }))
 
 app.post('/api/tasks/:id/cancel', handle(async (req) => ({ cancelled: runner.cancel(req.params.id) })))
+
+// Dismiss every inactive agent at once (cleans up worktrees + drops history).
+// Declared before the :id route so "clear-inactive" isn't captured as an id.
+app.post('/api/tasks/clear-inactive', handle(async () => ({ cleared: await runner.discardInactive() })))
+
+// Dismiss a single inactive agent (finished/cancelled/errored) and reclaim its
+// worktree + history. Refuses agents that are still active or awaiting you.
+app.delete('/api/tasks/:id', handle(async (req) => {
+  const deleted = await runner.discardTask(req.params.id)
+  if (!deleted) throw new Error('agent is still active — cancel it first')
+  return { deleted }
+}))
 
 // Answer a clarifying question a waiting agent asked via ask_user.
 app.post('/api/tasks/:id/answer', handle(async (req) => {

@@ -4,7 +4,7 @@ import * as git from './git.js'
 import * as gh from './github.js'
 import * as questions from './questions.js'
 import { openSession, runExecution, describeTool, generateChangeName, textDelta } from './agent.js'
-import { updateTask, addEvent, getTask, streamText } from './tasks.js'
+import { updateTask, addEvent, getTask, streamText, deleteTask, listTasks } from './tasks.js'
 import * as preview from './preview.js'
 
 const sessions = new Map() // taskId -> ctx
@@ -66,6 +66,28 @@ ${tree.list}
 Guidelines:
 - You are already at the repository root. Use relative paths only; never cd elsewhere or touch other locations — those attempts are blocked and waste turns.
 - Work in parallel: when reading or grepping several files, issue those tool calls together in one step.
+- Match the project's existing style and conventions. Run commands (build, tests, version bumps) in the worktree as needed.
+- Do NOT commit, push, or open a pull request — the operator reviews and stages your changes.
+- The operator may send follow-up instructions to refine the work, so keep going until they're satisfied.
+- End each turn with a 1-3 sentence summary of what you changed.`
+}
+
+// First message when REUSING an agent: we resume its prior Claude session, so it
+// already knows this codebase — skip the file tree and lean on what it learned.
+// But it's a brand-new worktree: any edits from the earlier conversation are NOT
+// on disk here, so be explicit that the working tree is clean.
+function errandResumeFirstMessage(owner, repo, instruction) {
+  return `We're continuing in the SAME session, so you keep everything you already learned about ${owner}/${repo} — no need to re-explore the parts you've already seen.
+
+IMPORTANT: this is a NEW task in a FRESH, clean checkout of ${owner}/${repo} at its default branch. Any file changes from earlier in our conversation are NOT present here — treat the working tree as pristine and re-read a file before editing if you're unsure of its current contents.
+
+--- NEW TASK ---
+${instruction}
+--- END TASK ---
+
+Guidelines:
+- You are already at the repository root. Use relative paths only; never cd elsewhere or touch other locations — those attempts are blocked and waste turns.
+- Reuse what you already know; only read files you haven't seen or need to re-check. Work in parallel when you do read or grep several files.
 - Match the project's existing style and conventions. Run commands (build, tests, version bumps) in the worktree as needed.
 - Do NOT commit, push, or open a pull request — the operator reviews and stages your changes.
 - The operator may send follow-up instructions to refine the work, so keep going until they're satisfied.
@@ -164,27 +186,37 @@ export async function startPlan(task, { defaultBranch } = {}) {
 // A plan-less "quick task": an interactive, write-capable session in an isolated
 // worktree. The operator chats with the agent and, when happy, stages the result
 // into "Ready to Review" — from there it follows the normal push→PR path.
-export async function startErrand(task, { instruction, defaultBranch } = {}) {
+// `resume` is a prior session id (from an inactive agent the operator chose to
+// reuse): the new errand continues that conversation, so the agent retains the
+// codebase context it already built instead of cold-starting from scratch.
+export async function startErrand(task, { instruction, defaultBranch, resume } = {}) {
   const { id, owner, repo, model } = task
   const text = instruction || task.body || task.issueTitle
   try {
     await updateTask(id, { status: 'preparing' })
+    if (resume) addEvent(id, { kind: 'status', text: 'Reusing a prior agent — resuming its session…' })
     addEvent(id, { kind: 'status', text: 'Preparing isolated worktree…' })
     const { path: wt, branch, base } = await git.createWorktree(owner, repo, id, defaultBranch)
     await updateTask(id, { branch, base, status: 'running' })
 
-    const tree = await git.trackedFiles(wt).catch(() => ({ total: 0, shown: 0, list: '(unavailable)' }))
     const issue = { number: null, title: task.issueTitle }
     const ctx = { id, owner, repo, issue, wt, branch, base, model, phase: 'errand', kind: 'errand', instruction: text, lastText: '' }
     sessions.set(id, ctx)
 
     const handle = await openSession({
       cwd: wt, model, permissionMode: 'bypassPermissions',
-      askUser: askUserFor(id),
+      askUser: askUserFor(id), resume,
       onMessage: (m) => onSessionMessage(ctx, m),
     })
     ctx.handle = handle
-    handle.send(errandFirstMessage(owner, repo, text, tree))
+    if (resume) {
+      handle.send(errandResumeFirstMessage(owner, repo, text))
+    } else {
+      // Cold start: front-load the file tree so the agent doesn't discover the
+      // repo structure one read at a time.
+      const tree = await git.trackedFiles(wt).catch(() => ({ total: 0, shown: 0, list: '(unavailable)' }))
+      handle.send(errandFirstMessage(owner, repo, text, tree))
+    }
   } catch (err) {
     console.error(`[errand ${id}]`, err)
     addEvent(id, { kind: 'error', text: err.message })
@@ -256,6 +288,14 @@ function onErrandMessage(ctx, m) {
       }
       break
     case 'result':
+      // A failed turn (e.g. a session resume that couldn't be loaded) — surface it
+      // rather than parking the agent in a broken idle state.
+      if (m.is_error) {
+        const why = m.error?.message || `session ${m.subtype || 'error'}`
+        addEvent(id, { kind: 'error', text: why })
+        updateTask(id, { status: 'error', error: why })
+        break
+      }
       // Turn finished — await the operator's next instruction or a stage.
       updateTask(id, { status: 'errand_idle', summary: ctx.lastText })
       break
@@ -1038,6 +1078,33 @@ export async function revise(taskId, instruction) {
 }
 
 // Stop an in-flight revision without discarding the staged work.
+// Statuses with no live agent session and no pending operator action — these are
+// the "inactive" agents that are safe to dismiss. Mirrors the frontend's
+// !ACTIVE.has(status) view in web/src/constants.js.
+const DELETABLE = new Set(['pr_open', 'no_changes', 'review_posted', 'cancelled', 'error', 'interrupted'])
+
+// Dismiss a single inactive agent: remove its worktree (if any) and drop it from
+// the store. Refuses tasks that are still active or awaiting you — cancel those
+// first. Returns true when the task was removed.
+export async function discardTask(taskId) {
+  const t = await getTask(taskId)
+  if (!t) return false
+  if (!DELETABLE.has(t.status)) return false
+  preview.stop(taskId)
+  await git.removeWorktree(t.owner, t.repo, taskId).catch(() => {})
+  return deleteTask(taskId)
+}
+
+// Bulk-dismiss every inactive agent. Returns the count removed.
+export async function discardInactive() {
+  const all = await listTasks()
+  let cleared = 0
+  for (const t of all) {
+    if (DELETABLE.has(t.status) && (await discardTask(t.id))) cleared++
+  }
+  return cleared
+}
+
 export function stopRun(taskId) {
   questions.clear(taskId)
   const ctx = sessions.get(taskId)

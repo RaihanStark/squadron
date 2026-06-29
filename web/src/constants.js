@@ -2,6 +2,10 @@
 export const ACTIVE = new Set(['queued', 'preparing', 'planning', 'planned', 'running', 'errand_idle', 'waiting', 'committing', 'changes_ready', 'pushing', 'opening_pr', 'reviewing', 'reviewed', 'posting'])
 export const NEEDS_YOU = new Set(['planned', 'waiting', 'reviewed', 'changes_ready', 'errand_idle'])
 
+// An agent with no live session and nothing awaiting you — finished, cancelled,
+// errored, or interrupted. These are safe to dismiss from the Agents panel.
+export const isInactive = (status) => !ACTIVE.has(status)
+
 // Statuses where the agent is actively chewing (shows a live "working" indicator)
 // — excludes the awaiting-you states (planned/reviewed/waiting).
 export const WORKING_LABEL = {
