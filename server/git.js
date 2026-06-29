@@ -203,6 +203,21 @@ export async function stagedDiff(wt) {
   return stdout
 }
 
+// A compact per-file summary of the staged changes (filenames + +/- counts).
+// Front-loaded to the namer instead of the full diff, so it only spends tokens
+// on files it decides to inspect via stagedFileDiff.
+export async function stagedDiffStat(wt) {
+  const { stdout } = await git(['diff', '--cached', '--stat'], wt)
+  return stdout
+}
+
+// The staged diff hunks for a single file — what the namer pulls on demand when
+// the --stat summary alone isn't enough to describe the change.
+export async function stagedFileDiff(wt, file) {
+  const { stdout } = await git(['diff', '--cached', '--', file], wt)
+  return stdout
+}
+
 // Commit the already-staged changes. Returns false if there's nothing staged.
 export async function commitStaged(wt, message) {
   if (!(await stagedDiff(wt)).trim()) return false

@@ -116,19 +116,28 @@ export async function openSession({ cwd, model = 'opus', permissionMode = 'plan'
 // conversation (e.g. the files it already read while planning) instead of
 // cold-starting. If the resume fails before producing any output (e.g. the
 // session was pruned from disk), we fall back to a fresh run exactly once.
-export async function runExecution({ prompt, cwd, model = 'opus', onEvent, signal, askUser, resume }) {
+export async function runExecution({ prompt, cwd, model = 'opus', onEvent, signal, askUser, resume, output }) {
   const { query, createSdkMcpServer, tool } = await sdk()
 
-  const mcpServers = {}
+  const tools = []
   if (askUser) {
-    const askTool = tool(
+    tools.push(tool(
       'ask_user',
       'Ask the human operator a clarifying question and WAIT for their answer. Use ONLY when a wrong assumption would be expensive or irreversible.',
       { question: z.string().describe('The clarifying question to put to the operator') },
       async ({ question }) => ({ content: [{ type: 'text', text: await askUser(question) }] }),
-    )
-    mcpServers.squadron = createSdkMcpServer({ name: 'squadron', version: '0.1.0', tools: [askTool] })
+    ))
   }
+  // Optional structured output: the agent calls a typed "submit" tool to return
+  // its result, so we read validated args instead of regex-scraping its prose.
+  let captured = null
+  if (output) {
+    tools.push(tool(output.name, output.description, output.schema, async (args) => {
+      captured = output.normalize ? output.normalize(args) : args
+      return { content: [{ type: 'text', text: 'Recorded.' }] }
+    }))
+  }
+  const mcpServers = tools.length ? { squadron: createSdkMcpServer({ name: 'squadron', version: '0.1.0', tools }) } : {}
 
   const baseOptions = {
     cwd, model, permissionMode: 'bypassPermissions', allowDangerouslySkipPermissions: true, mcpServers,
@@ -157,18 +166,18 @@ export async function runExecution({ prompt, cwd, model = 'opus', onEvent, signa
           case 'assistant':
             for (const b of msg.message?.content ?? []) {
               if (b.type === 'text' && b.text?.trim()) { summary = b.text.trim(); onEvent({ kind: 'text', text: summary }) }
-              else if (b.type === 'tool_use' && !b.name?.endsWith('ask_user')) onEvent({ kind: 'tool', text: describeTool(b) })
+              else if (b.type === 'tool_use' && !b.name?.endsWith('ask_user') && !(output && b.name?.endsWith(output.name))) onEvent({ kind: 'tool', text: describeTool(b) })
             }
             break
           case 'result': {
             if (msg.result) summary = msg.result
             const ok = !msg.is_error && msg.subtype === 'success'
             onEvent({ kind: 'result', ok, text: ok ? 'execution finished' : `stopped: ${msg.subtype}`, costUsd: msg.total_cost_usd, numTurns: msg.num_turns })
-            return { ok, summary, costUsd: msg.total_cost_usd, subtype: msg.subtype }
+            return { ok, summary, costUsd: msg.total_cost_usd, subtype: msg.subtype, output: captured }
           }
         }
       }
-      return { ok: false, summary, error: 'stream ended without a result' }
+      return { ok: false, summary, error: 'stream ended without a result', output: captured }
     } catch (err) {
       // A resume that dies before emitting anything → retry once from cold.
       if (withResume && !produced && !signal?.aborted) {
@@ -181,46 +190,48 @@ export async function runExecution({ prompt, cwd, model = 'opus', onEvent, signa
   }
 }
 
-// Largest diff we'll feed the namer — naming doesn't need the whole thing.
+// Largest --stat summary we'll feed the namer (a guard; the summary is small).
 const NAME_DIFF_MAX = 50000
 
-// Pull a { title, commit } object out of the namer's reply. Mirrors the
-// fenced-then-loose JSON extraction used elsewhere; returns null on any failure.
-function parseChangeName(text) {
-  const raw = String(text || '')
-  let json = null
-  const fence = raw.match(/```(?:json)?\s*([\s\S]*?)```/i)
-  if (fence) json = fence[1]
-  else {
-    const obj = raw.match(/\{[\s\S]*\}/)
-    if (obj) json = obj[0]
-  }
-  if (!json) return null
-  try {
-    const p = JSON.parse(json.trim())
-    const title = String(p.title || '').trim().replace(/\s+/g, ' ').slice(0, 72)
-    const commit = String(p.commit || '').trim()
-    if (!title && !commit) return null
-    return { title: title || null, commit: commit || null }
-  } catch {
-    return null
+// Give a one-shot helper model a "submit" tool to return its answer as a typed
+// tool call, instead of us regex-scraping JSON out of its prose. Optional `extras`
+// register additional tools the model may call before submitting — e.g. on-demand
+// retrieval, so we can front-load a small summary and let it pull only what it
+// needs (saving tokens). Returns the MCP server to register, the fully-qualified
+// tool names to allow, and a getter for the captured (normalized) value — null
+// until the model calls the submit tool.
+function makeOutputCapture(createSdkMcpServer, tool, { name, description, schema, normalize, extras = [] }) {
+  let captured = null
+  const submit = tool(name, description, schema, async (args) => {
+    captured = normalize ? normalize(args) : args
+    return { content: [{ type: 'text', text: 'Recorded.' }] }
+  })
+  const built = extras.map((e) => tool(e.name, e.description, e.schema, e.handler))
+  const names = [name, ...extras.map((e) => e.name)]
+  return {
+    mcpServers: { squadron: createSdkMcpServer({ name: 'squadron', version: '0.1.0', tools: [submit, ...built] }) },
+    allowedTools: names.map((n) => `mcp__squadron__${n}`),
+    get: () => captured,
   }
 }
 
-// Pull a { agentId, reason } object out of the Marshal's reply.
-function parseChoice(text) {
-  const raw = String(text || '')
-  const fence = raw.match(/```(?:json)?\s*([\s\S]*?)```/i)
-  const body = fence ? fence[1] : raw.match(/\{[\s\S]*\}/)?.[0]
-  if (!body) return null
-  try {
-    const p = JSON.parse(body.trim())
-    const agentId = typeof p.agentId === 'string' && p.agentId.trim() ? p.agentId.trim() : null
-    const reason = (p.reason ? String(p.reason).trim() : '').slice(0, 200) || null
-    return { agentId, reason }
-  } catch {
-    return null
+// Normalize the marshal's submitted decision into { agentId, reason }: a trimmed
+// string agentId or null, and a short (<=200 char) reason or null. Exported so
+// it can be unit-tested without driving a live model.
+export function normalizeChoice({ agentId, reason } = {}) {
+  return {
+    agentId: typeof agentId === 'string' && agentId.trim() ? agentId.trim() : null,
+    reason: (reason ? String(reason).trim() : '').slice(0, 200) || null,
   }
+}
+
+// Normalize the namer's submitted { title, commit }; returns null when both are
+// empty so the caller falls back to the instruction text. Exported for testing.
+export function normalizeChangeName({ title, commit } = {}) {
+  const t = String(title || '').trim().replace(/\s+/g, ' ').slice(0, 72)
+  const c = String(commit || '').trim()
+  if (!t && !c) return null
+  return { title: t || null, commit: c || null }
 }
 
 // The MARSHAL: a cheap, tool-less orchestrator that routes a task to the best
@@ -243,65 +254,82 @@ ${list}
 
 Prefer an agent with knowsThisRepo=yes and related recentWork. Only pick one if it truly helps; otherwise choose none (a fresh agent is better than forcing an unrelated one).
 
-Reply with EXACTLY ONE fenced \`\`\`json code block and nothing else:
-{ "agentId": "<id from the list, or null>", "reason": "<one short sentence>" }`
+Call the submit_choice tool with your decision — nothing else.`
 
   try {
-    const { query } = await sdk()
-    const q = query({ prompt, options: { model, permissionMode: 'bypassPermissions', allowedTools: [], disallowedTools: [] } })
-    let out = ''
-    for await (const msg of q) {
-      if (msg.type === 'assistant') {
-        for (const b of msg.message?.content ?? []) if (b.type === 'text' && b.text?.trim()) out = b.text.trim()
-      } else if (msg.type === 'result' && msg.result) out = msg.result
-    }
-    return parseChoice(out)
+    const { query, createSdkMcpServer, tool } = await sdk()
+    const out = makeOutputCapture(createSdkMcpServer, tool, {
+      name: 'submit_choice',
+      description: 'Submit your routing decision: which existing agent should handle the task, or null to start a fresh one.',
+      schema: {
+        agentId: z.string().nullable().describe('The chosen agent id from the list, or null to start a fresh agent'),
+        reason: z.string().nullable().describe('One short sentence explaining the choice'),
+      },
+      normalize: normalizeChoice,
+    })
+    // maxTurns bounds the run: the marshal should make a single submit_choice
+    // call, so a few turns of slack guards against a model that loops instead.
+    const q = query({ prompt, options: { model, permissionMode: 'bypassPermissions', mcpServers: out.mcpServers, allowedTools: out.allowedTools, disallowedTools: [], maxTurns: 4 } })
+    for await (const _ of q) { /* drain until the model calls submit_choice */ }
+    return out.get()
   } catch {
     return null
   }
 }
 
-// Summarize a diff into a concise PR title + commit message. A cheap, tool-less
-// one-shot — used to name a quick task's changes by what actually changed rather
-// than the raw instruction. Returns { title, commit } or null on any failure so
-// callers can fall back to the instruction text.
-export async function generateChangeName({ diff, instruction, model = 'haiku' }) {
-  const text = String(diff || '').trim()
-  if (!text) return null
-  const clipped = text.length > NAME_DIFF_MAX ? text.slice(0, NAME_DIFF_MAX) + '\n…[diff truncated]…' : text
-  const prompt = `You are naming a code change for review. Below is the original request and the git diff of the changes that were made. Summarize what the diff ACTUALLY does (not just what was asked) into a concise title and commit message.
+// Largest single-file diff slice we hand back when the namer asks to inspect a file.
+const NAME_FILE_DIFF_MAX = 8000
 
-Reply with EXACTLY ONE fenced \`\`\`json code block and nothing else, of the form:
-{
-  "title": "<imperative summary, <= 70 chars, no trailing period>",
-  "commit": "<conventional commit subject line; optionally a blank line then a short body>"
-}
+// Summarize a change into a concise PR title + commit message. To keep this cheap,
+// we front-load only `git diff --stat` (filenames + line counts) and expose a
+// read_diff tool the namer calls to pull a specific file's hunks ONLY when the
+// summary isn't enough — so it spends tokens on the files that matter instead of
+// the whole diff. `readFileDiff(file)` returns one file's staged diff. Returns
+// { title, commit } or null on any failure so callers can fall back to the
+// instruction text.
+export async function generateChangeName({ stat, instruction, readFileDiff, model = 'haiku' }) {
+  const summary = String(stat || '').trim()
+  if (!summary) return null
+  const clipped = summary.length > NAME_DIFF_MAX ? summary.slice(0, NAME_DIFF_MAX) + '\n…[summary truncated]…' : summary
+  const prompt = `You are naming a code change for review. Below is the original request and a per-file summary (\`git diff --stat\`) of what changed. Name the change by what it ACTUALLY does (not just what was asked).
+
+If the file summary alone isn't enough to write an accurate title and commit message, call the read_diff tool with a path from the summary to see that file's actual hunks — read only the file(s) you need, not all of them. When ready, call submit_change_name with your result.
 
 --- ORIGINAL REQUEST ---
 ${String(instruction || '(none)').slice(0, 2000)}
 --- END REQUEST ---
 
---- DIFF ---
+--- CHANGED FILES (git diff --stat) ---
 ${clipped}
---- END DIFF ---`
+--- END CHANGED FILES ---`
 
   try {
-    const { query } = await sdk()
-    const q = query({
-      prompt,
-      options: { model, permissionMode: 'bypassPermissions', allowedTools: [], disallowedTools: [] },
+    const { query, createSdkMcpServer, tool } = await sdk()
+    const out = makeOutputCapture(createSdkMcpServer, tool, {
+      name: 'submit_change_name',
+      description: 'Submit the concise PR title and commit message for the change.',
+      schema: {
+        title: z.string().describe('Imperative summary, <= 70 chars, no trailing period'),
+        commit: z.string().describe('Conventional commit subject line; optionally a blank line then a short body'),
+      },
+      normalize: normalizeChangeName,
+      extras: readFileDiff ? [{
+        name: 'read_diff',
+        description: 'Return the staged diff hunks for ONE changed file. Use only when the --stat summary is not enough to name the change.',
+        schema: { file: z.string().describe('A file path taken from the changed-files summary') },
+        handler: async ({ file }) => {
+          let d = ''
+          try { d = String((await readFileDiff(file)) || '') } catch { /* unreadable path */ }
+          if (d.length > NAME_FILE_DIFF_MAX) d = d.slice(0, NAME_FILE_DIFF_MAX) + '\n…[diff truncated]…'
+          return { content: [{ type: 'text', text: d.trim() || `(no staged diff for "${file}")` }] }
+        },
+      }] : [],
     })
-    let out = ''
-    for await (const msg of q) {
-      if (msg.type === 'assistant') {
-        for (const b of msg.message?.content ?? []) {
-          if (b.type === 'text' && b.text?.trim()) out = b.text.trim()
-        }
-      } else if (msg.type === 'result' && msg.result) {
-        out = msg.result
-      }
-    }
-    return parseChangeName(out)
+    // maxTurns caps the read_diff loop: a handful of file inspections plus the
+    // final submit_change_name, so a model that keeps reading can't run away.
+    const q = query({ prompt, options: { model, permissionMode: 'bypassPermissions', mcpServers: out.mcpServers, allowedTools: out.allowedTools, disallowedTools: [], maxTurns: 10 } })
+    for await (const _ of q) { /* drain until the model calls submit_change_name */ }
+    return out.get()
   } catch {
     return null
   }
