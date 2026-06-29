@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { api } from '../api.js'
 import { usePref } from '../prefs.js'
 import { parseDiff } from '../diff.js'
+import { createResizeDrag } from '../dragResize.js'
 import DiffFile from './DiffFile.jsx'
 import ChatLine from './ChatLine.jsx'
 import Markdown from './Markdown.jsx'
@@ -17,7 +18,7 @@ export default function ChangesDetail({ task, onBack }) {
   const [confirmingDiscard, setConfirmingDiscard] = useState(false)
   const [chatW, setChatW] = usePref('chatWidth', 400)
   const logRef = useRef(null)
-  const dragging = useRef(false)
+  const drag = useRef(null)
 
   // (Re)load the diff on open and whenever a revision finishes.
   useEffect(() => {
@@ -28,12 +29,13 @@ export default function ChangesDetail({ task, onBack }) {
 
   useEffect(() => { if (logRef.current) logRef.current.scrollTop = logRef.current.scrollHeight }, [task?.events?.length, task?.status, task?.streaming])
 
-  // Drag-to-resize the chat panel.
+  // Drag-to-resize the chat panel. The controller guarantees the global
+  // user-select lock is released on unmount — even mid-drag — so closing this
+  // view can never leave inputs app-wide uneditable (issue #47).
   useEffect(() => {
-    const move = (e) => { if (dragging.current) setChatW(Math.max(300, Math.min(760, window.innerWidth - e.clientX))) }
-    const up = () => { dragging.current = false; document.body.style.userSelect = '' }
-    window.addEventListener('mousemove', move); window.addEventListener('mouseup', up)
-    return () => { window.removeEventListener('mousemove', move); window.removeEventListener('mouseup', up) }
+    const ctl = createResizeDrag((clientX) => setChatW(Math.max(300, Math.min(760, window.innerWidth - clientX))))
+    drag.current = ctl
+    return () => ctl.destroy()
   }, [])
 
   if (!task) return <div className="empty">These changes are no longer available.</div>
@@ -95,7 +97,7 @@ export default function ChangesDetail({ task, onBack }) {
           {files && files.map((f, fi) => <DiffFile key={fi} file={f} findings={[]} />)}
         </div>
 
-        <div className="ide-resize" onMouseDown={() => { dragging.current = true; document.body.style.userSelect = 'none' }} />
+        <div className="ide-resize" onMouseDown={() => drag.current?.start()} />
 
         <div className="ide-chat" style={{ width: chatW }}>
           <div className="chat-head">
