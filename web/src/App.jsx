@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { api, DEMO, PARAMS } from './api.js'
 import { ACTIVE, NEEDS_YOU, isInactive } from './constants.js'
 import { usePref, getPref, setPref } from './prefs.js'
+import { rosterFromTasks } from './agents.js'
 import { requestNotifyPermission, notifyTransition } from './notify.js'
 import NotifSettings from './components/NotifSettings.jsx'
 import Sidebar from './components/Sidebar.jsx'
@@ -115,11 +116,12 @@ export default function App() {
   }, [])
 
   const taskList = Object.values(tasks).sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0))
+  const agents = rosterFromTasks(taskList)
   const activeCount = taskList.filter((t) => ACTIVE.has(t.status)).length
   const waitingCount = taskList.filter((t) => NEEDS_YOU.has(t.status)).length
   const activeRepo = repos.find((r) => r.nameWithOwner === active)
 
-  async function dispatch(repoObj, issue, model) {
+  async function dispatch(repoObj, issue, model, opts = {}) {
     const [owner, repo] = repoObj.nameWithOwner.split('/')
     try {
       const task = await api(`/api/repos/${owner}/${repo}/plan`, {
@@ -131,6 +133,8 @@ export default function App() {
           body: issue.body,
           defaultBranch: repoObj.defaultBranchRef?.name,
           model,
+          agentId: opts.agentId,
+          fresh: opts.fresh,
         }),
       })
       setTasks((prev) => ({ ...prev, [task.id]: { ...(prev[task.id] || {}), ...task, events: prev[task.id]?.events || [] } }))
@@ -197,7 +201,7 @@ export default function App() {
     const [owner, repo] = repoObj.nameWithOwner.split('/')
     const task = await api(`/api/repos/${owner}/${repo}/errand`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ instruction, defaultBranch: repoObj.defaultBranchRef?.name, fresh: !!opts.fresh }),
+      body: JSON.stringify({ instruction, defaultBranch: repoObj.defaultBranchRef?.name, agentId: opts.agentId, fresh: opts.fresh }),
     })
     setTasks((prev) => ({ ...prev, [task.id]: { ...(prev[task.id] || {}), ...task, events: prev[task.id]?.events || [] } }))
     return task
@@ -279,7 +283,7 @@ export default function App() {
             <AgentsPanel tasks={taskList} selected={selectedTask} setSelected={setSelectedTask} onOpenChanges={openChanges}
               onDismiss={dismissTask} onClearInactive={clearInactiveTasks} />
           ) : view === 'issue' && selectedIssue ? (
-            <IssueDetail repo={selectedIssue.repo} issue={selectedIssue.issue} me={me}
+            <IssueDetail repo={selectedIssue.repo} issue={selectedIssue.issue} me={me} agents={agents}
               task={findTask((t) => `${t.owner}/${t.repo}` === selectedIssue.repo.nameWithOwner && (t.kind || 'plan') !== 'review' && t.issueNumber == (selectedIssue.issue.number ?? selectedIssue.issue.id))}
               onDispatch={dispatch} onOpenTask={openTask} onBack={backToRepo} />
           ) : view === 'changes' && selectedChange ? (

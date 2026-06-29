@@ -92,32 +92,103 @@ export async function findActiveByIssue(owner, repo, number, kind = 'plan') {
 // Excludes 'error'/'interrupted' (the session may be mid-tool or broken).
 const RESUMABLE_STATUS = new Set(['pr_open', 'no_changes', 'review_posted', 'cancelled'])
 
+// Task kinds whose session explores the repo broadly enough to be worth carrying
+// into a new task (vs. PR-scoped fix/review/resolve sessions).
+const RESUMABLE_KINDS = new Set(['errand', 'plan'])
+
 // How recently a reusable agent must have run to auto-continue it. Past this we
 // cold-start instead: the repo has likely drifted and replaying a stale, bloated
 // transcript can cost more than the re-exploration it saves.
 const RESUME_MAX_AGE_MS = 12 * 60 * 60 * 1000 // 12h
 
-// The most recent quick-task (errand) agent for this repo whose session we can
-// resume to pick up where it left off — keeping its codebase context so a new
-// task doesn't cold-start. Returns null when nothing qualifies (→ fresh session).
-export async function findResumableAgent(owner, repo, now = Date.now()) {
-  await load()
+// An agent is a persistent "person": a stable agentId + callsign that spans the
+// tasks it works, carrying its Claude session (context) forward. Fresh agents get
+// a squadron callsign; reused ones keep theirs.
+const CALLSIGNS = [
+  'Maverick', 'Goose', 'Iceman', 'Viper', 'Ghost', 'Falcon', 'Raven', 'Phoenix', 'Echo', 'Saber',
+  'Nomad', 'Comet', 'Razor', 'Jester', 'Slider', 'Hawk', 'Talon', 'Bandit', 'Cobra', 'Apex',
+  'Zephyr', 'Orion', 'Vega', 'Atlas', 'Nova', 'Blaze', 'Spectre', 'Rogue', 'Vapor', 'Drift',
+]
+function mintCallsign() {
+  const used = new Set([...tasks.values()].map((t) => t.agentName).filter(Boolean))
+  const free = CALLSIGNS.filter((n) => !used.has(n))
+  const pool = free.length ? free : CALLSIGNS
+  const pick = pool[Math.floor(Math.random() * pool.length)]
+  return free.length ? pick : `${pick} ${used.size + 1}`
+}
+function nameForAgent(agentId) {
+  for (const t of tasks.values()) if (t.agentId === agentId && t.agentName) return t.agentName
+  return null
+}
+
+// The most recent dormant, healthy session for a given agent — the one we resume
+// when that agent is (re)assigned. Null if the agent is busy or has none.
+function latestResumableTask({ agentId, owner, repo, now = Date.now(), maxAge = Infinity }) {
   let best = null
   for (const t of tasks.values()) {
-    if (t.owner !== owner || t.repo !== repo) continue
-    if ((t.kind || 'plan') !== 'errand' || !t.sessionId) continue
+    if (agentId && t.agentId !== agentId) continue
+    if (owner && (t.owner !== owner || t.repo !== repo)) continue
+    if (!RESUMABLE_KINDS.has(t.kind || 'plan') || !t.sessionId) continue
     if (!RESUMABLE_STATUS.has(t.status)) continue
-    if (now - (t.createdAt || 0) > RESUME_MAX_AGE_MS) continue
+    if (now - (t.createdAt || 0) > maxAge) continue
     if (!best || (t.createdAt || 0) > (best.createdAt || 0)) best = t
   }
   return best
 }
 
-export async function createTask({ owner, repo, issueNumber, issueTitle, model, kind = 'plan', local = false, body = null }) {
+// The most recent reusable agent for this repo (any explore-kind) — used for the
+// seamless default ("continue whoever last worked here"). Null → fresh session.
+export async function findResumableAgent(owner, repo, now = Date.now()) {
+  await load()
+  return latestResumableTask({ owner, repo, now, maxAge: RESUME_MAX_AGE_MS })
+}
+
+// Resolve who works a new task. Returns the session to resume (if any) plus the
+// agent identity to stamp on the task:
+//   - fresh: true        → brand-new agent (mint a callsign)
+//   - agentId given      → assign that existing person, resuming its latest session
+//   - neither            → seamless default: continue this repo's recent agent
+export async function resolveAssignment({ owner, repo, agentId = null, fresh = false, model = null }) {
+  await load()
+  if (fresh) return { resume: null, agentId: null, agentName: null, model }
+  if (agentId) {
+    const src = latestResumableTask({ agentId })
+    if (!src) throw new Error('that agent has no session to continue right now')
+    return { resume: src.sessionId, agentId, agentName: nameForAgent(agentId), model: model || src.model }
+  }
+  const warm = await findResumableAgent(owner, repo)
+  if (warm) return { resume: warm.sessionId, agentId: warm.agentId || warm.id, agentName: warm.agentName || null, model: model || warm.model }
+  return { resume: null, agentId: null, agentName: null, model }
+}
+
+// The roster of agents (persons) derived from their tasks — name, repos they
+// know, last activity, and whether they currently have a resumable session.
+export async function listAgents() {
+  await load()
+  const byId = new Map()
+  for (const t of [...tasks.values()].sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0))) {
+    if (!t.agentId) continue
+    let a = byId.get(t.agentId)
+    if (!a) { a = { agentId: t.agentId, name: t.agentName, model: t.model, repos: new Set(), lastActiveAt: 0, tasks: 0, sessionId: null, assignable: false }; byId.set(t.agentId, a) }
+    if (t.agentName) a.name = t.agentName
+    if (t.model) a.model = t.model
+    a.repos.add(`${t.owner}/${t.repo}`)
+    a.lastActiveAt = Math.max(a.lastActiveAt, t.createdAt || 0)
+    a.tasks++
+    if (t.sessionId && RESUMABLE_STATUS.has(t.status)) { a.sessionId = t.sessionId; a.assignable = true } // tasks sorted asc → latest wins
+  }
+  return [...byId.values()].map((a) => ({ ...a, repos: [...a.repos] })).sort((x, y) => y.lastActiveAt - x.lastActiveAt)
+}
+
+export async function createTask({ owner, repo, issueNumber, issueTitle, model, kind = 'plan', local = false, body = null, agentId = null, agentName = null }) {
   await load()
   const id = randomUUID().slice(0, 8)
+  // Stamp the agent identity: reuse the assigned person, else mint a new one.
+  const aId = agentId || randomUUID().slice(0, 8)
+  const aName = agentName || nameForAgent(aId) || mintCallsign()
   const task = {
     id, owner, repo, kind, issueNumber, issueTitle, local, body, model: model || 'opus',
+    agentId: aId, agentName: aName,
     status: 'queued', branch: null, base: null, headRef: null, prUrl: null, sessionId: null,
     plan: null, review: null, findings: null, question: null, summary: null, error: null, costUsd: null, staged: false,
     createdAt: Date.now(), events: [],

@@ -67,7 +67,8 @@ export default function AgentDetail({ task, onOpenChanges }) {
         </div>
         <div className="agent-actions">
           <StatusBadge status={task.status} />
-          {task.resumed && <span className="badge resume-badge" title="Continued a recent agent — reusing its context to save tokens">↺ continued</span>}
+          {task.agentName && <span className="badge agent-badge" title="The agent (person) on this task">🎖 {task.agentName}</span>}
+          {task.resumed && <span className="badge resume-badge" title="Continued an existing agent — reusing its context to save tokens">↺ continued</span>}
           {task.model && <span className="badge model-badge">{task.model}</span>}
           {task.branch && <span className="badge">{task.branch}</span>}
           {busy && task.status !== 'changes_ready' && <button className="cancel" onClick={() => post('cancel')}>Cancel</button>}

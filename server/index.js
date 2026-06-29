@@ -12,7 +12,7 @@ import * as preview from './preview.js'
 import * as usage from './usage.js'
 import * as runConfig from './runConfig.js'
 import * as selectedRepos from './selectedRepos.js'
-import { bus, listTasks, getTask, createTask, findActiveByIssue, findResumableAgent } from './tasks.js'
+import { bus, listTasks, getTask, createTask, findActiveByIssue, resolveAssignment, listAgents } from './tasks.js'
 
 const app = express()
 const PORT = process.env.PORT || 5174
@@ -146,14 +146,17 @@ app.post('/api/repos/:owner/:repo/pulls/:number/merge', handle(async (req) =>
 // immediately; the plan chat streams over /api/stream.
 app.post('/api/repos/:owner/:repo/plan', handle(async (req) => {
   const { owner, repo } = req.params
-  const { issueNumber, issueTitle, model, defaultBranch, local, body } = req.body
+  const { issueNumber, issueTitle, model, defaultBranch, local, body, agentId, fresh } = req.body
   if (!issueNumber) throw new Error('issueNumber is required')
   // Dedupe: if a plan/run is already in flight for this issue, return it
   // instead of spawning a second agent.
   const existing = await findActiveByIssue(owner, repo, issueNumber)
   if (existing) return { ...existing, deduped: true }
-  const task = await createTask({ owner, repo, issueNumber, issueTitle, model, local: !!local, body })
-  runner.startPlan(task, { defaultBranch }).catch((e) => console.error('startPlan crashed', e))
+  // Assign a person to scope this issue — an existing agent (resuming its context)
+  // or a fresh one. Defaults to continuing this repo's recent agent.
+  const a = await resolveAssignment({ owner, repo, agentId, fresh, model })
+  const task = await createTask({ owner, repo, issueNumber, issueTitle, model: a.model || model, local: !!local, body, agentId: a.agentId, agentName: a.agentName })
+  runner.startPlan(task, { defaultBranch, resume: a.resume }).catch((e) => console.error('startPlan crashed', e))
   return task
 }))
 
@@ -219,22 +222,18 @@ app.post('/api/repos/:owner/:repo/resolve', handle(async (req) => {
 // Ready to Review without the plan/approve ceremony. Streams over /api/stream.
 app.post('/api/repos/:owner/:repo/errand', handle(async (req) => {
   const { owner, repo } = req.params
-  const { instruction, model, defaultBranch, fresh } = req.body || {}
+  const { instruction, model, defaultBranch, fresh, agentId } = req.body || {}
   const text = (instruction || '').trim()
   if (!text) throw new Error('instruction is required')
-  // Seamless token-saving: by default, continue this repo's most recent healthy
-  // quick-task agent so it keeps the codebase context it already built (no cold
-  // re-exploration). Inherit its model so the resumed session matches. `fresh:
-  // true` opts out for a clean slate.
-  let resume = null, useModel = model
-  if (!fresh) {
-    const warm = await findResumableAgent(owner, repo)
-    if (warm) { resume = warm.sessionId; useModel = model || warm.model }
-  }
+  // Assign a person to this quick task — an existing agent (resuming its context
+  // to save tokens) or a fresh one. Defaults to continuing this repo's recent
+  // agent; `agentId` assigns a specific one; `fresh: true` starts a clean slate.
+  const a = await resolveAssignment({ owner, repo, agentId, fresh, model })
   const task = await createTask({
-    owner, repo, issueNumber: null, issueTitle: text.slice(0, 80), kind: 'errand', local: true, body: text, model: useModel,
+    owner, repo, issueNumber: null, issueTitle: text.slice(0, 80), kind: 'errand', local: true, body: text,
+    model: a.model || model, agentId: a.agentId, agentName: a.agentName,
   })
-  runner.startErrand(task, { instruction: text, defaultBranch, resume }).catch((e) => console.error('startErrand crashed', e))
+  runner.startErrand(task, { instruction: text, defaultBranch, resume: a.resume }).catch((e) => console.error('startErrand crashed', e))
   return task
 }))
 
@@ -290,6 +289,9 @@ app.put('/api/repos/:owner/:repo/run-command', handle(async (req) =>
   ({ command: await runConfig.setCmd(`${req.params.owner}/${req.params.repo}`, (req.body?.command || '').trim()) })))
 
 app.get('/api/tasks', handle(() => listTasks()))
+
+// The roster of agents (persons) you can assign work to.
+app.get('/api/agents', handle(() => listAgents()))
 
 app.get('/api/tasks/:id', handle(async (req) => {
   const t = await getTask(req.params.id)

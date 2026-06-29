@@ -24,7 +24,7 @@ export default function AgentsPanel({ tasks, selected, setSelected, onOpenChange
             onClick={() => setSelected(t.id)}
           >
             <div className="agent-row-top">
-              <span className="title">{t.repo} <span className="muted">{t.issueNumber ? `#${t.issueNumber}` : '⚡'}</span></span>
+              <span className="title">{t.agentName ? <span className="callsign">🎖 {t.agentName}</span> : t.repo} <span className="muted">{t.repo}{t.issueNumber ? ` #${t.issueNumber}` : ' ⚡'}</span></span>
               <span className="agent-row-actions">
                 <StatusBadge status={t.status} />
                 {isInactive(t.status) && onDismiss && (

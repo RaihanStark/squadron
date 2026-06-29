@@ -488,11 +488,10 @@ body {
 .agent-row:hover .agent-dismiss { opacity: 1; }
 .agent-dismiss:hover { color: var(--red); background: var(--panel-2); }
 .resume-badge { border-color: var(--accent); color: var(--accent); }
-.errand-fresh {
-  display: flex; align-items: center; gap: 7px; margin-top: 10px;
-  font-size: 12px; color: var(--text); cursor: pointer; user-select: none;
-}
-.errand-fresh input { margin: 0; cursor: pointer; }
+.agent-badge { border-color: var(--accent-dim); color: var(--accent); }
+.callsign { font-weight: 600; color: var(--accent); }
+.agent-picker { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; }
+.agent-picker .muted { font-size: 11px; letter-spacing: 0.3px; }
 .clear-inactive {
   background: none; border: 1px solid var(--border); color: var(--muted);
   font-size: 11px; letter-spacing: 0; padding: 2px 7px; border-radius: 5px; cursor: pointer;

@@ -32,6 +32,20 @@ Operating rules (important):
 - Present the plan directly as your reply. Do NOT write it to a file, do NOT call ExitPlanMode or AskUserQuestion, and do NOT discuss which tools are or aren't available.
 - To ask the operator a question, simply write it in your message — they reply in the chat. The operator approves and triggers execution separately.`
 
+// Scoping a new issue while REUSING an assigned agent's session — it keeps the
+// context it already built, so skip the file-tree dump and lean on what it knows.
+function planResumeFirstMessage(owner, repo, issue) {
+  return `We're continuing in the SAME session, so you keep all the context you've already built up — reuse what you know about the codebase instead of re-exploring from scratch.
+
+This is a NEW issue to scope, in a fresh read-only checkout of ${owner}/${repo} at its default branch. Stay strictly inside the working directory; relative paths only. Re-read anything you're unsure is current.
+
+Investigate the relevant code (reusing what you already know) and propose a concrete, skimmable implementation plan.
+
+--- ISSUE${issue.number ? ` #${issue.number}` : ' (local draft)'}: ${issue.title} ---
+${issue.body || '(no description provided)'}
+--- END ISSUE ---`
+}
+
 function planFirstMessage(owner, repo, issue, tree) {
   return `You are scoping work in the repository ${owner}/${repo}. The repo is checked out in your current working directory (read-only for now).
 
@@ -77,7 +91,7 @@ Guidelines:
 // But it's a brand-new worktree: any edits from the earlier conversation are NOT
 // on disk here, so be explicit that the working tree is clean.
 function errandResumeFirstMessage(owner, repo, instruction) {
-  return `We're continuing in the SAME session, so you keep everything you already learned about ${owner}/${repo} — no need to re-explore the parts you've already seen.
+  return `We're continuing in the SAME session, so you keep all the context you've already built up — reuse what you know instead of re-exploring from scratch.
 
 IMPORTANT: this is a NEW task in a FRESH, clean checkout of ${owner}/${repo} at its default branch. Any file changes from earlier in our conversation are NOT present here — treat the working tree as pristine and re-read a file before editing if you're unsure of its current contents.
 
@@ -150,29 +164,39 @@ ${plan || '(none)'}
 
 // --- Plan phase ---
 
-export async function startPlan(task, { defaultBranch } = {}) {
+// `resume` is a prior session id (from an assigned agent): the planner continues
+// that conversation, keeping the codebase context it already built instead of
+// cold-starting a fresh exploration of the repo.
+export async function startPlan(task, { defaultBranch, resume } = {}) {
   const { id, owner, repo, issueNumber, model } = task
   try {
-    await updateTask(id, { status: 'preparing' })
+    await updateTask(id, { status: 'preparing', ...(resume ? { resumed: true } : {}) })
     const issue = task.local
       ? { number: null, title: task.issueTitle, body: task.body || '(no description)' }
       : (addEvent(id, { kind: 'status', text: `Fetching issue #${issueNumber}…` }), await gh.getIssue(owner, repo, issueNumber))
 
+    if (resume) addEvent(id, { kind: 'status', text: `Continuing ${task.agentName || 'an assigned agent'} — reusing its context to save tokens.` })
     addEvent(id, { kind: 'status', text: 'Preparing isolated worktree…' })
     const { path: wt, branch, base } = await git.createWorktree(owner, repo, id, defaultBranch)
     await updateTask(id, { branch, base, status: 'planning' })
 
-    const tree = await git.trackedFiles(wt).catch(() => ({ total: 0, shown: 0, list: '(unavailable)' }))
     const ctx = { id, owner, repo, issue, wt, branch, base, model, phase: 'planning', lastText: '', plan: '' }
     sessions.set(id, ctx)
 
     const handle = await openSession({
       cwd: wt, model, permissionMode: 'plan', planModeInstructions: PLAN_INSTRUCTIONS,
-      askUser: askUserFor(id), // armed now so ask_user works when we reuse this session to execute
+      askUser: askUserFor(id), resume, // armed now so ask_user works when we reuse this session to execute
       onMessage: (m) => onSessionMessage(ctx, m),
     })
     ctx.handle = handle
-    handle.send(planFirstMessage(owner, repo, issue, tree))
+    if (resume) {
+      handle.send(planResumeFirstMessage(owner, repo, issue))
+    } else {
+      // Cold start: front-load the file tree so the planner doesn't discover the
+      // repo structure one read at a time.
+      const tree = await git.trackedFiles(wt).catch(() => ({ total: 0, shown: 0, list: '(unavailable)' }))
+      handle.send(planFirstMessage(owner, repo, issue, tree))
+    }
   } catch (err) {
     console.error(`[plan ${id}]`, err)
     addEvent(id, { kind: 'error', text: err.message })
@@ -194,7 +218,7 @@ export async function startErrand(task, { instruction, defaultBranch, resume } =
   const text = instruction || task.body || task.issueTitle
   try {
     await updateTask(id, { status: 'preparing', ...(resume ? { resumed: true } : {}) })
-    if (resume) addEvent(id, { kind: 'status', text: "Continuing this repo's recent agent — reusing its context to save tokens." })
+    if (resume) addEvent(id, { kind: 'status', text: `Continuing ${task.agentName || 'a recent agent'} — reusing its context to save tokens.` })
     addEvent(id, { kind: 'status', text: 'Preparing isolated worktree…' })
     const { path: wt, branch, base } = await git.createWorktree(owner, repo, id, defaultBranch)
     await updateTask(id, { branch, base, status: 'running' })
