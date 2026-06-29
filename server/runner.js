@@ -4,7 +4,7 @@ import { z } from 'zod'
 import * as git from './git.js'
 import * as gh from './github.js'
 import * as questions from './questions.js'
-import { openSession, runExecution, describeTool, generateChangeName, textDelta, chooseAgent } from './agent.js'
+import { openSession, runExecution, describeTool, generateChangeName, textDelta, chooseAgent, subagentLabel } from './agent.js'
 import { ensureSessionResumable } from './claudeSessions.js'
 import { updateTask, addEvent, getTask, streamText, deleteTask, listTasks, resumableCandidates, findResumableAgent } from './tasks.js'
 import * as preview from './preview.js'
@@ -47,6 +47,7 @@ Operating rules (important):
 - You are already in the repository root. Use relative paths only; never cd elsewhere or access paths outside this directory.
 - A file tree of the repo is provided below — use it to jump straight to the relevant files instead of discovering the structure one read at a time.
 - Work in parallel: when you need to read or grep several files you already know you want, issue those tool calls TOGETHER in a single step (multiple parallel tool calls), not one after another. Minimize sequential round-trips.
+- Delegate exploration: for broad codebase searches, dispatch the \`scout\` subagent (Task tool — it runs on a cheaper model in its own context) instead of reading many files yourself, then build the plan from what it reports back.
 - Present the plan directly as your reply. Do NOT write it to a file, do NOT call ExitPlanMode or AskUserQuestion, and do NOT discuss which tools are or aren't available.
 - To ask the operator a question, simply write it in your message — they reply in the chat. The operator approves and triggers execution separately.`
 
@@ -98,6 +99,7 @@ ${tree.list}
 Guidelines:
 - You are already at the repository root. Use relative paths only; never cd elsewhere or touch other locations — those attempts are blocked and waste turns.
 - Work in parallel: when reading or grepping several files, issue those tool calls together in one step.
+- Delegate grunt work: hand off codebase searches and read-only exploration to the \`scout\` subagent (Task tool — it runs on a cheaper model in its own context window) rather than reading many files yourself; make the actual edits yourself.
 - Match the project's existing style and conventions. Run commands (build, tests, version bumps) in the worktree as needed.
 - Do NOT commit, push, or open a pull request — the operator reviews and stages your changes.
 - The operator may send follow-up instructions to refine the work, so keep going until they're satisfied.
@@ -160,6 +162,7 @@ ${plan}
 Guidelines:
 - You are already at the repository root. Use relative paths only; never cd elsewhere or touch other locations — those attempts are blocked and waste turns.
 - Work in parallel: when reading or grepping several files, issue those tool calls together in one step, not one at a time.
+- Delegate grunt work: hand off codebase searches and read-only exploration to the \`scout\` subagent (Task tool — it runs on a cheaper model in its own context window) rather than reading many files yourself; make the actual edits yourself.
 - Match the project's existing style and conventions.
 - If there's a test suite, run it; add or update tests where sensible.
 - Only call the \`ask_user\` tool if a wrong guess would be expensive or irreversible.
@@ -350,13 +353,15 @@ function onErrandMessage(ctx, m) {
     case 'system':
       if (m.subtype === 'init') addEvent(id, { kind: 'status', text: `agent online · ${m.model || ctx.model}` })
       break
-    case 'assistant':
-      ctx.streamBuf = '' // finalized turn landed — drop any live partial
+    case 'assistant': {
+      const sub = subagentLabel(m)
+      if (!sub) ctx.streamBuf = '' // finalized turn landed — drop any live partial (a subagent heartbeat must not)
       for (const b of m.message?.content ?? []) {
-        if (b.type === 'text' && b.text?.trim()) { ctx.lastText = b.text.trim(); addEvent(id, { kind: 'text', text: ctx.lastText }) }
-        else if (b.type === 'tool_use' && !b.name?.endsWith('ask_user')) addEvent(id, { kind: 'tool', text: describeTool(b) })
+        if (b.type === 'text' && b.text?.trim()) { if (sub) continue; ctx.lastText = b.text.trim(); addEvent(id, { kind: 'text', text: ctx.lastText }) }
+        else if (b.type === 'tool_use' && !b.name?.endsWith('ask_user')) addEvent(id, { kind: 'tool', text: describeTool(b), ...(sub ? { sub } : {}) })
       }
       break
+    }
     case 'result':
       // A failed turn (e.g. a session resume that couldn't be loaded) — surface it
       // rather than parking the agent in a broken idle state.
@@ -400,16 +405,18 @@ function onPlanMessage(ctx, m) {
     case 'system':
       if (m.subtype === 'init') addEvent(id, { kind: 'status', text: `planner online · ${m.model || ctx.model}` })
       break
-    case 'assistant':
-      ctx.streamBuf = '' // finalized turn landed — drop any live partial
+    case 'assistant': {
+      const sub = subagentLabel(m)
+      if (!sub) ctx.streamBuf = '' // finalized turn landed — drop any live partial (a subagent heartbeat must not)
       for (const b of m.message?.content ?? []) {
-        if (b.type === 'text' && b.text?.trim()) { ctx.lastText = b.text.trim(); addEvent(id, { kind: 'text', text: ctx.lastText }) }
+        if (b.type === 'text' && b.text?.trim()) { if (sub) continue; ctx.lastText = b.text.trim(); addEvent(id, { kind: 'text', text: ctx.lastText }) }
         else if (b.type === 'tool_use') {
           if (b.name === 'ExitPlanMode' && b.input?.plan) { ctx.lastText = b.input.plan }
-          else addEvent(id, { kind: 'tool', text: describeTool(b) })
+          else addEvent(id, { kind: 'tool', text: describeTool(b), ...(sub ? { sub } : {}) })
         }
       }
       break
+    }
     case 'result':
       if (m.is_error) {
         const why = m.error?.message || `session ${m.subtype || 'error'}`
@@ -431,13 +438,15 @@ function onPlanMessage(ctx, m) {
 function onExecMessage(ctx, m) {
   const { id } = ctx
   switch (m.type) {
-    case 'assistant':
-      ctx.streamBuf = '' // finalized turn landed — drop any live partial
+    case 'assistant': {
+      const sub = subagentLabel(m)
+      if (!sub) ctx.streamBuf = '' // finalized turn landed — drop any live partial (a subagent heartbeat must not)
       for (const b of m.message?.content ?? []) {
-        if (b.type === 'text' && b.text?.trim()) { ctx.lastText = b.text.trim(); addEvent(id, { kind: 'text', text: ctx.lastText }) }
-        else if (b.type === 'tool_use' && !b.name?.endsWith('ask_user')) addEvent(id, { kind: 'tool', text: describeTool(b) })
+        if (b.type === 'text' && b.text?.trim()) { if (sub) continue; ctx.lastText = b.text.trim(); addEvent(id, { kind: 'text', text: ctx.lastText }) }
+        else if (b.type === 'tool_use' && !b.name?.endsWith('ask_user')) addEvent(id, { kind: 'tool', text: describeTool(b), ...(sub ? { sub } : {}) })
       }
       break
+    }
     case 'result': {
       const summary = m.result || ctx.lastText || ''
       const ok = !m.is_error && m.subtype === 'success'
