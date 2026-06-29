@@ -77,8 +77,10 @@ export const tasks = [
       { kind: 'tool', sub: 'scout', text: '🔍 glob **/*.test.js' },
       { kind: 'tool', text: '✏️  edit src/export.js' },
       { kind: 'tool', text: '📝 write src/export.csv.test.js' },
-      { kind: 'tool', text: '$ npm test -- export' },
-      { kind: 'text', text: 'Sent a scout to map the export path on a cheaper model, then added a toCSV() serializer wired to the `export --format csv` flag. Writing a test for the rounding of partial hours.' },
+      { kind: 'tool', text: '🤝 verifier: run the export tests' },
+      { kind: 'tool', sub: 'verifier', text: '$ npm test -- export' },
+      { kind: 'tool', sub: 'verifier', text: '✓ PASS — 6 passed' },
+      { kind: 'text', text: 'Sent a scout to map the export path and a verifier to run the suite — both on a cheaper model — then added a toCSV() serializer wired to the `export --format csv` flag. Tests pass.' },
     ],
   },
   {

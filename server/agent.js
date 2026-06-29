@@ -37,20 +37,20 @@ export function describeTool(block) {
   }
 }
 
-// Subagents the main agent delegates to via the SDK's built-in `Task` tool.
-// Pushing read-only grunt work — locating files, searching for usages, reading
-// and summarizing code — onto a subagent running a CHEAPER model keeps it off
-// the expensive main model, runs in an isolated context window (so the grunt
-// work never bloats the main conversation), and lets several run in parallel.
-// We want the main agent to lean on this HARD — delegating is faster and
-// cheaper — so the description below and the prompts push it to be the default
-// for any read-only lookup. The confine hook still applies to every subagent's
-// tool calls, so they stay inside the worktree.
+// Focused specialist subagents the main agent delegates to via the SDK's built-in
+// `Task` tool. Each runs in its OWN context window on a CHEAPER model, so the side
+// work — searching the codebase, or running checks and reading their verbose
+// output — never bloats the main conversation and never burns the expensive
+// model (the two documented wins: preserve context, control cost). The SDK uses
+// each agent's `description` to decide when to delegate, so they're written to
+// trigger eagerly ("Use PROACTIVELY"), and each is tool-restricted to its job.
+// The confine hook still applies to every subagent's tool calls, so they stay
+// inside the worktree.
 const SUBAGENT_MODEL = 'haiku'
 const SUBAGENTS = {
   scout: {
     description:
-      'Read-only codebase scout that runs on a cheaper, faster model in its own context window. This is your DEFAULT tool for ANY read-only investigation: locating files, searching for symbols/usages/strings, reading files, tracing how something works, or summarizing code — anything that does NOT modify files. Strongly prefer delegating to a scout over reading or grepping yourself, even for a single lookup, and spawn several in parallel for independent questions. It returns a tight summary, so your context stays lean and the run stays cheap. Only skip it for a file you must open in order to edit it.',
+      'Read-only codebase scout that runs on a cheaper, faster model in its own context window. Use PROACTIVELY for ANY read-only investigation: locating files, searching for symbols/usages/strings, reading files, tracing how something works, or summarizing code — anything that does NOT modify files. Strongly prefer delegating to a scout over reading or grepping yourself, even for a single lookup, and spawn several in parallel for independent questions. It returns a tight summary, so your context stays lean and the run stays cheap. Only skip it for a file you must open in order to edit it.',
     prompt: `You are a fast, read-only scout exploring a code repository on behalf of a parent engineering agent. Your job is to find things and report back concisely — never modify files.
 
 - Use Grep/Glob to locate code and Read to inspect it; batch independent searches into one step.
@@ -59,6 +59,28 @@ const SUBAGENTS = {
     tools: ['Read', 'Grep', 'Glob'],
     model: SUBAGENT_MODEL,
   },
+  verifier: {
+    description:
+      "Runs the project's checks — tests, build, lint, typecheck — on a cheaper model in its own context, then reports a concise PASS/FAIL verdict with only the relevant failing output. Use PROACTIVELY after making changes, or whenever you need to know whether something works, instead of running long commands yourself — the verbose logs stay out of your conversation. Tell it exactly which command(s) to run.",
+    prompt: `You are a verification subagent for a parent engineering agent. Run ONLY the check command(s) the parent asks for — tests, build, lint, or typecheck — and report back tightly. Never modify files or attempt fixes.
+
+- Run the requested command(s) with Bash. If the parent didn't name one, infer it from the project (package.json scripts, Makefile, etc.) and state which you ran.
+- Lead with a one-line verdict: PASS or FAIL.
+- On FAIL, include ONLY the failing test names and the key error lines — not the whole log. The parent pays for every token you return.
+- Report what passed and what failed; leave the fixing to the parent.`,
+    tools: ['Bash', 'Read', 'Grep', 'Glob'],
+    model: SUBAGENT_MODEL,
+  },
+}
+
+// Which subagents are available in a given permission mode. Planning is read-only,
+// so the planner only gets the read-only scout; write-capable runs also get the
+// verifier, which executes checks via Bash. (The SDK fixes `agents` at session
+// creation, so a session that starts in plan mode keeps the scout-only set even
+// after it flips to execution — the warm path can still run checks itself; only
+// the standalone verifier specialist is reserved for cold autonomous runs.)
+function subagentsFor(permissionMode) {
+  return permissionMode === 'plan' ? { scout: SUBAGENTS.scout } : SUBAGENTS
 }
 
 // The subagent that produced a message, or null if it came from the lead agent.
@@ -118,7 +140,7 @@ export async function openSession({ cwd, model = 'opus', permissionMode = 'plan'
     prompt: input.gen,
     options: {
       cwd, model, permissionMode, mcpServers,
-      agents: SUBAGENTS, // let the main agent delegate cheap grunt work to a cheaper subagent
+      agents: subagentsFor(permissionMode), // delegate grunt work to cheaper subagents (scout only while planning)
       includePartialMessages: true, // stream token deltas so the UI renders live
       allowDangerouslySkipPermissions: true, // arm the capability so we can flip to execute later
       hooks: makeConfineHook(cwd), // confine the agent to its worktree
@@ -177,7 +199,7 @@ export async function runExecution({ prompt, cwd, model = 'opus', onEvent, signa
 
   const baseOptions = {
     cwd, model, permissionMode: 'bypassPermissions', allowDangerouslySkipPermissions: true, mcpServers,
-    agents: SUBAGENTS, // let the main agent delegate cheap grunt work to a cheaper subagent
+    agents: SUBAGENTS, // write-capable run → full specialist set (scout + verifier) on the cheaper model
     includePartialMessages: true, // stream token deltas so the UI renders live
     hooks: makeConfineHook(cwd), // confine the agent to its worktree
   }
