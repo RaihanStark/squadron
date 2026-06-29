@@ -251,7 +251,9 @@ Call the submit_choice tool with your decision — nothing else.`
         reason: (reason ? String(reason).trim() : '').slice(0, 200) || null,
       }),
     })
-    const q = query({ prompt, options: { model, permissionMode: 'bypassPermissions', mcpServers: out.mcpServers, allowedTools: out.allowedTools, disallowedTools: [] } })
+    // maxTurns bounds the run: the marshal should make a single submit_choice
+    // call, so a few turns of slack guards against a model that loops instead.
+    const q = query({ prompt, options: { model, permissionMode: 'bypassPermissions', mcpServers: out.mcpServers, allowedTools: out.allowedTools, disallowedTools: [], maxTurns: 4 } })
     for await (const _ of q) { /* drain until the model calls submit_choice */ }
     return out.get()
   } catch {
@@ -312,7 +314,9 @@ ${clipped}
         },
       }] : [],
     })
-    const q = query({ prompt, options: { model, permissionMode: 'bypassPermissions', mcpServers: out.mcpServers, allowedTools: out.allowedTools, disallowedTools: [] } })
+    // maxTurns caps the read_diff loop: a handful of file inspections plus the
+    // final submit_change_name, so a model that keeps reading can't run away.
+    const q = query({ prompt, options: { model, permissionMode: 'bypassPermissions', mcpServers: out.mcpServers, allowedTools: out.allowedTools, disallowedTools: [], maxTurns: 10 } })
     for await (const _ of q) { /* drain until the model calls submit_change_name */ }
     return out.get()
   } catch {
