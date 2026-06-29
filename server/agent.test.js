@@ -33,6 +33,8 @@ test('textDelta ignores block boundary and non-stream messages', () => {
 test('describeTool renders known tools and falls back for unknown ones', () => {
   assert.equal(describeTool({ name: 'Bash', input: { command: 'ls -la' } }), '$ ls -la')
   assert.equal(describeTool({ name: 'Read', input: { file_path: 'a.js' } }), '📖 read a.js')
+  assert.equal(describeTool({ name: 'WebSearch', input: { query: 'how to use zod' } }), '🌐 search "how to use zod"')
+  assert.equal(describeTool({ name: 'WebFetch', input: { url: 'https://example.com/docs' } }), '🌐 fetch https://example.com/docs')
   assert.equal(describeTool({ name: 'mcp__squadron__read_diff', input: {} }), '🔧 mcp__squadron__read_diff')
 })
 

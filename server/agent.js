@@ -32,6 +32,8 @@ export function describeTool(block) {
     case 'Grep': return `🔍 grep "${i.pattern || ''}"`
     case 'Glob': return `🔍 glob ${i.pattern || ''}`
     case 'TodoWrite': return `📋 planning…`
+    case 'WebSearch': return `🌐 search "${(i.query || '').slice(0, 80)}"`
+    case 'WebFetch': return `🌐 fetch ${i.url || ''}`
     default: return `🔧 ${n}`
   }
 }
@@ -79,6 +81,12 @@ export async function openSession({ cwd, model = 'opus', permissionMode = 'plan'
   }
 
   const input = makeInputQueue()
+  // We deliberately leave `allowedTools` unset: with no allowlist the full default
+  // toolset is available — including the built-in WebSearch / WebFetch tools, so the
+  // agent can look things up online. (`allowedTools` is a HARD allowlist in this SDK —
+  // see chooseAgent/generateChangeName, which use it to restrict a helper to a single
+  // tool — so listing only the web tools here would remove Read/Edit/Bash/etc.) The
+  // confine hook still blocks filesystem/Bash escapes; web access is read-only.
   const q = query({
     prompt: input.gen,
     options: {
@@ -139,6 +147,10 @@ export async function runExecution({ prompt, cwd, model = 'opus', onEvent, signa
   }
   const mcpServers = tools.length ? { squadron: createSdkMcpServer({ name: 'squadron', version: '0.1.0', tools }) } : {}
 
+  // No `allowedTools`: the full default toolset (incl. WebSearch / WebFetch) stays
+  // available so the agent can search the web. `allowedTools` is a hard allowlist in
+  // this SDK, so naming only the web tools would strip Read/Edit/Bash/etc. The confine
+  // hook still blocks filesystem/Bash escapes; web access is read-only.
   const baseOptions = {
     cwd, model, permissionMode: 'bypassPermissions', allowDangerouslySkipPermissions: true, mcpServers,
     includePartialMessages: true, // stream token deltas so the UI renders live

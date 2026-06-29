@@ -48,6 +48,7 @@ Operating rules (important):
 - A file tree of the repo is provided below — use it to jump straight to the relevant files instead of discovering the structure one read at a time.
 - Work in parallel: when you need to read or grep several files you already know you want, issue those tool calls TOGETHER in a single step (multiple parallel tool calls), not one after another. Minimize sequential round-trips.
 - Present the plan directly as your reply. Do NOT write it to a file, do NOT call ExitPlanMode or AskUserQuestion, and do NOT discuss which tools are or aren't available.
+- You may use the WebSearch and WebFetch tools to look things up online (library docs, error messages, APIs) while scoping — the path restriction above applies only to local files, not the web.
 - To ask the operator a question, simply write it in your message — they reply in the chat. The operator approves and triggers execution separately.`
 
 // Scoping a new issue while REUSING an assigned agent's session — it keeps the
@@ -97,6 +98,7 @@ ${tree.list}
 
 Guidelines:
 - You are already at the repository root. Use relative paths only; never cd elsewhere or touch other locations — those attempts are blocked and waste turns.
+- You may use the WebSearch and WebFetch tools to look things up online (library docs, error messages, APIs) — the path restriction applies only to local files, not the web.
 - Work in parallel: when reading or grepping several files, issue those tool calls together in one step.
 - Match the project's existing style and conventions. Run commands (build, tests, version bumps) in the worktree as needed.
 - Do NOT commit, push, or open a pull request — the operator reviews and stages your changes.
@@ -119,6 +121,7 @@ ${instruction}
 
 Guidelines:
 - You are already at the repository root. Use relative paths only; never cd elsewhere or touch other locations — those attempts are blocked and waste turns.
+- You may use the WebSearch and WebFetch tools to look things up online (library docs, error messages, APIs) — the path restriction applies only to local files, not the web.
 - Reuse what you already know; only read files you haven't seen or need to re-check. Work in parallel when you do read or grep several files.
 - Match the project's existing style and conventions. Run commands (build, tests, version bumps) in the worktree as needed.
 - Do NOT commit, push, or open a pull request — the operator reviews and stages your changes.
@@ -141,6 +144,7 @@ ${tree.list}
 
 Guidelines:
 - You are already at the repository root. Use relative paths only; never cd elsewhere or touch other locations — those attempts are blocked and waste turns.
+- You may use the WebSearch and WebFetch tools to look things up online (library docs, error messages, APIs) — the path restriction applies only to local files, not the web.
 - Work in parallel: when reading or grepping several files, issue those tool calls together in one step.
 - Match the project's existing style and conventions. Run the test suite if there is one.
 - Do NOT commit, push, or open a pull request — the operator reviews and stages your changes, which then push back to this PR's branch.
@@ -159,6 +163,7 @@ ${plan}
 
 Guidelines:
 - You are already at the repository root. Use relative paths only; never cd elsewhere or touch other locations — those attempts are blocked and waste turns.
+- You may use the WebSearch and WebFetch tools to look things up online (library docs, error messages, APIs) — the path restriction applies only to local files, not the web.
 - Work in parallel: when reading or grepping several files, issue those tool calls together in one step, not one at a time.
 - Match the project's existing style and conventions.
 - If there's a test suite, run it; add or update tests where sensible.
@@ -897,6 +902,7 @@ ${logs}
 Guidelines:
 - You are already at the repo root. Use relative paths only; never cd elsewhere or touch other locations — those attempts are blocked and waste turns.
 - Investigate the failure first (read the implicated files/tests), then make the smallest correct fix.
+- You may use the WebSearch and WebFetch tools to look things up online (library docs, error messages, APIs) — the path restriction applies only to local files, not the web.
 - Work in parallel: when reading or grepping several files, issue those tool calls together in one step.
 - Match the project's existing style and conventions. If there's a test suite, run it to confirm the build is green before finishing.
 - Do NOT commit, push, or open a PR — the harness handles git. Leave your finished changes saved in the working tree.
