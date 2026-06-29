@@ -1,7 +1,8 @@
 name: Release
 
-# Build the Electron app into an RPM and attach it to the GitHub Release when a
-# v* tag is pushed (or run manually).
+# Build the Electron app (RPM + AppImage) and attach it to the GitHub Release
+# when a v* tag is pushed (or run manually). The AppImage and latest-linux.yml
+# update metadata are what electron-updater uses to auto-update installed apps.
 on:
   push:
     tags: ['v*']
@@ -31,8 +32,8 @@ jobs:
       - name: Build frontend
         run: npm --prefix web run build
 
-      - name: Build RPM
-        run: npx electron-builder --linux rpm --publish never
+      - name: Build RPM + AppImage
+        run: npx electron-builder --linux --publish never
 
       - name: List artifacts
         run: ls -la dist-electron
@@ -43,4 +44,7 @@ jobs:
           tag_name: ${{ github.ref_name }}
           name: ${{ github.ref_name }}
           generate_release_notes: true
-          files: dist-electron/*.rpm
+          files: |
+            dist-electron/*.rpm
+            dist-electron/*.AppImage
+            dist-electron/latest-linux.yml
