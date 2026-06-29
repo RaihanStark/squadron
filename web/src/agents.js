@@ -20,7 +20,7 @@ export function rosterFromTasks(tasks) {
 }
 
 // Map an AgentPicker value to the dispatch options:
-//   'auto'      → {} (let the General route it — the default)
+//   'auto'      → {} (let the Marshal route it — the default)
 //   'new'       → { fresh: true } (force a clean agent)
 //   '<agentId>' → { agentId } (pin a specific person)
 export function assignmentOpts(value) {

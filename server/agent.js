@@ -207,7 +207,7 @@ function parseChangeName(text) {
   }
 }
 
-// Pull a { agentId, reason } object out of the General's reply.
+// Pull a { agentId, reason } object out of the Marshal's reply.
 function parseChoice(text) {
   const raw = String(text || '')
   const fence = raw.match(/```(?:json)?\s*([\s\S]*?)```/i)
@@ -223,7 +223,7 @@ function parseChoice(text) {
   }
 }
 
-// The GENERAL: a cheap, tool-less orchestrator that routes a task to the best
+// The MARSHAL: a cheap, tool-less orchestrator that routes a task to the best
 // available agent — one who already knows the codebase or did related work, so
 // it reuses its context (saving tokens and ramp-up) — or to a fresh agent when
 // none fits. Returns { agentId|null, reason } or null on failure (→ caller falls
@@ -233,7 +233,7 @@ export async function chooseAgent({ instruction, repo, candidates, model = 'haik
   const list = candidates.map((c, i) =>
     `${i + 1}. id=${c.agentId} · callsign=${c.name} · knowsThisRepo=${c.knowsRepo ? 'yes' : 'no'} · recentWork=${(c.focus || []).join(' | ') || '(unknown)'}`,
   ).join('\n')
-  const prompt = `You are the GENERAL, orchestrating a fleet of autonomous coding agents. A new task has arrived. Pick the BEST existing agent to handle it — one who already knows this codebase or did closely related work, so they reuse their context instead of cold-starting. If none is a genuinely good fit, start a fresh agent.
+  const prompt = `You are the MARSHAL, orchestrating a fleet of autonomous coding agents. A new task has arrived. Pick the BEST existing agent to handle it — one who already knows this codebase or did closely related work, so they reuse their context instead of cold-starting. If none is a genuinely good fit, start a fresh agent.
 
 REPO: ${repo}
 TASK: ${String(instruction || '(no description)').slice(0, 1500)}

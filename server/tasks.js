@@ -180,9 +180,9 @@ export async function listAgents() {
   return [...byId.values()].map((a) => ({ ...a, repos: [...a.repos] })).sort((x, y) => y.lastActiveAt - x.lastActiveAt)
 }
 
-// The agents the General may route a task to: assignable (dormant healthy
+// The agents the Marshal may route a task to: assignable (dormant healthy
 // session), within the freshness window, each with a short "focus" — the titles
-// of its recent tasks — so the General can judge relatedness.
+// of its recent tasks — so the Marshal can judge relatedness.
 export async function resumableCandidates(owner, repo, now = Date.now()) {
   await load()
   const agents = await listAgents()

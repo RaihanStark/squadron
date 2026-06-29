@@ -20,14 +20,14 @@ const PORT = process.env.PORT || 5174
 app.use(express.json())
 
 // Resolve who works a new task. Explicit `agentId`/`fresh` win; otherwise the
-// GENERAL auto-routes it to the best agent (or a fresh one). Returns the resolved
-// assignment ({ resume, agentId, agentName, model }) plus the General's reason.
+// MARSHAL auto-routes it to the best agent (or a fresh one). Returns the resolved
+// assignment ({ resume, agentId, agentName, model }) plus the Marshal's reason.
 async function assignTask({ owner, repo, instruction, agentId, fresh, model }) {
   let reason = null
   if (!agentId && !fresh) {
     const g = await runner.chooseAssignment({ owner, repo, instruction })
     if (g.agentId) agentId = g.agentId
-    else fresh = true // the General chose a fresh agent — don't fall back to the heuristic
+    else fresh = true // the Marshal chose a fresh agent — don't fall back to the heuristic
     reason = g.reason
   }
   const a = await resolveAssignment({ owner, repo, agentId, fresh, model })
@@ -167,11 +167,11 @@ app.post('/api/repos/:owner/:repo/plan', handle(async (req) => {
   // instead of spawning a second agent.
   const existing = await findActiveByIssue(owner, repo, issueNumber)
   if (existing) return { ...existing, deduped: true }
-  // The General assigns a person to scope this issue (or you can pin one). It
+  // The Marshal assigns a person to scope this issue (or you can pin one). It
   // continues an existing agent's context when that helps, else starts fresh.
   const a = await assignTask({ owner, repo, instruction: [issueTitle, body].filter(Boolean).join(' — '), agentId, fresh, model })
   const task = await createTask({ owner, repo, issueNumber, issueTitle, model: a.model || model, local: !!local, body, agentId: a.agentId, agentName: a.agentName })
-  if (a.reason) addEvent(task.id, { kind: 'status', text: `🎖 General → ${a.agentName || 'a new agent'}: ${a.reason}` })
+  if (a.reason) addEvent(task.id, { kind: 'status', text: `🎖 Marshal → ${a.agentName || 'a new agent'}: ${a.reason}` })
   runner.startPlan(task, { defaultBranch, resume: a.resume }).catch((e) => console.error('startPlan crashed', e))
   return task
 }))
@@ -241,7 +241,7 @@ app.post('/api/repos/:owner/:repo/errand', handle(async (req) => {
   const { instruction, model, defaultBranch, fresh, agentId } = req.body || {}
   const text = (instruction || '').trim()
   if (!text) throw new Error('instruction is required')
-  // The General assigns this quick task to the best agent — continuing one whose
+  // The Marshal assigns this quick task to the best agent — continuing one whose
   // context fits (saving tokens) or a fresh one. `agentId` pins a specific agent;
   // `fresh: true` forces a clean slate.
   const a = await assignTask({ owner, repo, instruction: text, agentId, fresh, model })
@@ -249,7 +249,7 @@ app.post('/api/repos/:owner/:repo/errand', handle(async (req) => {
     owner, repo, issueNumber: null, issueTitle: text.slice(0, 80), kind: 'errand', local: true, body: text,
     model: a.model || model, agentId: a.agentId, agentName: a.agentName,
   })
-  if (a.reason) addEvent(task.id, { kind: 'status', text: `🎖 General → ${a.agentName || 'a new agent'}: ${a.reason}` })
+  if (a.reason) addEvent(task.id, { kind: 'status', text: `🎖 Marshal → ${a.agentName || 'a new agent'}: ${a.reason}` })
   runner.startErrand(task, { instruction: text, defaultBranch, resume: a.resume }).catch((e) => console.error('startErrand crashed', e))
   return task
 }))

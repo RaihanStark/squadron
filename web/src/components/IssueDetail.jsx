@@ -7,7 +7,7 @@ import AgentPicker from './AgentPicker.jsx'
 export default function IssueDetail({ repo, issue, me, task, agents = [], onDispatch, onOpenTask, onBack }) {
   const [owner, name] = repo.nameWithOwner.split('/')
   const [model, setModel] = useState('opus')
-  const [assignTo, setAssignTo] = useState('auto') // 'auto' (General) | 'new' | agentId
+  const [assignTo, setAssignTo] = useState('auto') // 'auto' (Marshal) | 'new' | agentId
   const [full, setFull] = useState(issue.local ? issue : null)
   const [error, setError] = useState(null)
   const [acting, setActing] = useState(false)
@@ -19,7 +19,7 @@ export default function IssueDetail({ repo, issue, me, task, agents = [], onDisp
   useEffect(() => {
     setEditing(false)
     setConfirmingDelete(false)
-    setAssignTo('auto') // default to letting the General auto-assign
+    setAssignTo('auto') // default to letting the Marshal auto-assign
     if (issue.local) { setFull(issue); return }
     setFull(null); setError(null)
     api(`/api/repos/${owner}/${name}/issues/${issue.number}`).then(setFull).catch((e) => setError(e.message))

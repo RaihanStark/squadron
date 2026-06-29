@@ -14,7 +14,7 @@ export default function RepoErrand({ repo, tasks, onStart, onOpenChanges }) {
   const [text, setText] = useState('')
   const [busy, setBusy] = useState(false)
   const [composing, setComposing] = useState(false) // force the launcher even when a finished errand lingers
-  const [assignTo, setAssignTo] = useState('auto') // 'auto' (General) | 'new' | agentId
+  const [assignTo, setAssignTo] = useState('auto') // 'auto' (Marshal) | 'new' | agentId
   const logRef = useRef(null)
   const agents = rosterFromTasks(tasks)
 
@@ -29,7 +29,7 @@ export default function RepoErrand({ repo, tasks, onStart, onOpenChanges }) {
   const showStaged = !showChat && staged && !composing
   const showLauncher = !showChat && !showStaged
 
-  // Fresh repo → reset the composer; default to letting the General auto-assign.
+  // Fresh repo → reset the composer; default to letting the Marshal auto-assign.
   useEffect(() => { setComposing(false); setText(''); setAssignTo('auto') }, [repo.nameWithOwner])
   useEffect(() => { if (logRef.current) logRef.current.scrollTop = logRef.current.scrollHeight }, [live?.events?.length, live?.status, live?.streaming])
 
