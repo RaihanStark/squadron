@@ -37,18 +37,20 @@ export function describeTool(block) {
   }
 }
 
-// Subagents the main agent can delegate to via the SDK's built-in `Task` tool.
-// Offloading cheap, well-scoped grunt work — locating files, searching for
-// usages, reading and summarizing code — to a subagent on a CHEAPER model keeps
-// it off the expensive main model, runs in an isolated context window (so the
-// grunt work never bloats the main conversation), and lets several searches run
-// in parallel. Net effect: faster and cheaper. The confine hook still applies to
-// every subagent's tool calls, so they stay inside the worktree.
+// Subagents the main agent delegates to via the SDK's built-in `Task` tool.
+// Pushing read-only grunt work — locating files, searching for usages, reading
+// and summarizing code — onto a subagent running a CHEAPER model keeps it off
+// the expensive main model, runs in an isolated context window (so the grunt
+// work never bloats the main conversation), and lets several run in parallel.
+// We want the main agent to lean on this HARD — delegating is faster and
+// cheaper — so the description below and the prompts push it to be the default
+// for any read-only lookup. The confine hook still applies to every subagent's
+// tool calls, so they stay inside the worktree.
 const SUBAGENT_MODEL = 'haiku'
 const SUBAGENTS = {
   scout: {
     description:
-      'Read-only codebase scout. Delegate to it to locate files, search for symbols or usages, and read and summarize code — anything that does NOT modify files. It returns a concise summary so your context stays lean. Spawn several in parallel for independent searches.',
+      'Read-only codebase scout that runs on a cheaper, faster model in its own context window. This is your DEFAULT tool for ANY read-only investigation: locating files, searching for symbols/usages/strings, reading files, tracing how something works, or summarizing code — anything that does NOT modify files. Strongly prefer delegating to a scout over reading or grepping yourself, even for a single lookup, and spawn several in parallel for independent questions. It returns a tight summary, so your context stays lean and the run stays cheap. Only skip it for a file you must open in order to edit it.',
     prompt: `You are a fast, read-only scout exploring a code repository on behalf of a parent engineering agent. Your job is to find things and report back concisely — never modify files.
 
 - Use Grep/Glob to locate code and Read to inspect it; batch independent searches into one step.
