@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { api } from '../api.js'
-import { rosterFromTasks, assignmentOpts } from '../agents.js'
+import { assignmentOpts } from '../agents.js'
 import AgentPicker from './AgentPicker.jsx'
 import Markdown from './Markdown.jsx'
 import StatusBadge from './StatusBadge.jsx'
@@ -14,9 +14,8 @@ export default function RepoErrand({ repo, tasks, onStart, onOpenChanges }) {
   const [text, setText] = useState('')
   const [busy, setBusy] = useState(false)
   const [composing, setComposing] = useState(false) // force the launcher even when a finished errand lingers
-  const [assignTo, setAssignTo] = useState('auto') // 'auto' (Marshal) | 'new' | agentId
+  const [assignTo, setAssignTo] = useState('auto') // 'auto' (Marshal) | 'new'
   const logRef = useRef(null)
-  const agents = rosterFromTasks(tasks)
 
   const errands = tasks
     .filter((t) => t.kind === 'errand' && `${t.owner}/${t.repo}` === repo.nameWithOwner)
@@ -93,7 +92,7 @@ export default function RepoErrand({ repo, tasks, onStart, onOpenChanges }) {
             onChange={(e) => setText(e.target.value)}
             onKeyDown={onEnter(start)}
           />
-          <AgentPicker agents={agents} repo={repo.nameWithOwner} value={assignTo} onChange={setAssignTo} />
+          <AgentPicker compact value={assignTo} onChange={setAssignTo} />
           <button className="dispatch" disabled={busy || !text.trim()} onClick={start}>
             {busy ? 'Starting…' : 'Run quick task ↵'}
           </button>
