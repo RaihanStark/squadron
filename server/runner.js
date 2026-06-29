@@ -4,6 +4,7 @@ import * as git from './git.js'
 import * as gh from './github.js'
 import * as questions from './questions.js'
 import { openSession, runExecution, describeTool, generateChangeName, textDelta, chooseAgent } from './agent.js'
+import { ensureSessionResumable } from './claudeSessions.js'
 import { updateTask, addEvent, getTask, streamText, deleteTask, listTasks, resumableCandidates, findResumableAgent } from './tasks.js'
 import * as preview from './preview.js'
 
@@ -223,16 +224,21 @@ export async function startPlan(task, { defaultBranch, resume } = {}) {
       ? { number: null, title: task.issueTitle, body: task.body || '(no description)' }
       : (addEvent(id, { kind: 'status', text: `Fetching issue #${issueNumber}…` }), await gh.getIssue(owner, repo, issueNumber))
 
-    if (resume) addEvent(id, { kind: 'status', text: `Continuing ${task.agentName || 'an assigned agent'} — reusing its context to save tokens.` })
     addEvent(id, { kind: 'status', text: 'Preparing isolated worktree…' })
     const { path: wt, branch, base } = await git.createWorktree(owner, repo, id, defaultBranch)
     await updateTask(id, { branch, base, status: 'planning' })
+
+    // A session lives under the worktree it was created in; make it findable from
+    // this fresh worktree before resuming, else cold-start.
+    const useResume = resume && (await ensureSessionResumable(resume, wt)) ? resume : null
+    if (resume && useResume) addEvent(id, { kind: 'status', text: `Continuing ${task.agentName || 'an assigned agent'} — reusing its context to save tokens.` })
+    else if (resume) { addEvent(id, { kind: 'status', text: `Couldn't locate ${task.agentName || 'that agent'}'s saved session — starting fresh.` }); await updateTask(id, { resumed: false }) }
 
     const ctx = { id, owner, repo, issue, wt, branch, base, model, phase: 'planning', lastText: '', plan: '' }
     sessions.set(id, ctx)
 
     await openResumable(ctx, {
-      resume, // armed so ask_user works when we reuse this session to execute; falls back cold if the session is gone
+      resume: useResume, // armed so ask_user works when we reuse this session to execute; falls back cold if the session is gone
       makeSession: (o) => openSession({ cwd: wt, model, permissionMode: 'plan', planModeInstructions: PLAN_INSTRUCTIONS, askUser: askUserFor(id), ...o }),
       resumeMessage: () => planResumeFirstMessage(owner, repo, issue),
       // Cold start: front-load the file tree so the planner doesn't discover the repo one read at a time.
@@ -259,17 +265,22 @@ export async function startErrand(task, { instruction, defaultBranch, resume } =
   const text = instruction || task.body || task.issueTitle
   try {
     await updateTask(id, { status: 'preparing', ...(resume ? { resumed: true } : {}) })
-    if (resume) addEvent(id, { kind: 'status', text: `Continuing ${task.agentName || 'a recent agent'} — reusing its context to save tokens.` })
     addEvent(id, { kind: 'status', text: 'Preparing isolated worktree…' })
     const { path: wt, branch, base } = await git.createWorktree(owner, repo, id, defaultBranch)
     await updateTask(id, { branch, base, status: 'running' })
+
+    // A session lives under the worktree it was created in; make it findable from
+    // this fresh worktree before resuming, else cold-start.
+    const useResume = resume && (await ensureSessionResumable(resume, wt)) ? resume : null
+    if (resume && useResume) addEvent(id, { kind: 'status', text: `Continuing ${task.agentName || 'a recent agent'} — reusing its context to save tokens.` })
+    else if (resume) { addEvent(id, { kind: 'status', text: `Couldn't locate ${task.agentName || 'that agent'}'s saved session — starting fresh.` }); await updateTask(id, { resumed: false }) }
 
     const issue = { number: null, title: task.issueTitle }
     const ctx = { id, owner, repo, issue, wt, branch, base, model, phase: 'errand', kind: 'errand', instruction: text, lastText: '' }
     sessions.set(id, ctx)
 
     await openResumable(ctx, {
-      resume,
+      resume: useResume,
       makeSession: (o) => openSession({ cwd: wt, model, permissionMode: 'bypassPermissions', askUser: askUserFor(id), ...o }),
       resumeMessage: () => errandResumeFirstMessage(owner, repo, text),
       // Cold start: front-load the file tree so the agent doesn't discover the repo one read at a time.
