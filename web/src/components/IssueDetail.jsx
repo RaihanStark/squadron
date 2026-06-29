@@ -102,7 +102,7 @@ export default function IssueDetail({ repo, issue, me, task, agents = [], onDisp
                   <select className="model-select" value={model} onChange={(e) => setModel(e.target.value)} title="Model">
                     <option value="opus">Opus</option><option value="sonnet">Sonnet</option><option value="haiku">Haiku</option>
                   </select>
-                  <button className="approve-btn" onClick={() => onDispatch(repo, issue, model, assignmentOpts(assignTo))}>📋 Plan</button>
+                  <button className="approve-btn" disabled={acting} onClick={() => { setActing(true); Promise.resolve(onDispatch(repo, issue, model, assignmentOpts(assignTo))).finally(() => setActing(false)) }}>{acting ? 'Dispatching…' : '📋 Plan'}</button>
                 </>
               )}
             </>

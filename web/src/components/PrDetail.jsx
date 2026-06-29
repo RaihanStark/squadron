@@ -16,6 +16,8 @@ export default function PrDetail({ repo, pr, task, fixTask, resolveTask, tasks =
   const [merging, setMerging] = useState(false)
   const [mergeMethod, setMergeMethod] = useState('squash')
   const [fixOpen, setFixOpen] = useState(false)
+  const [dispatching, setDispatching] = useState(false) // guard double-click on review/resolve/fix-CI
+  const fire = (fn) => { setDispatching(true); Promise.resolve(fn()).finally(() => setDispatching(false)) }
 
   useEffect(() => {
     setFiles(null); setError(null); setDetail(null)
@@ -112,7 +114,7 @@ export default function PrDetail({ repo, pr, task, fixTask, resolveTask, tasks =
           {conflicting && !isFork && (
             resolving ? <span className="status status-reviewing">resolving…</span>
             : resolveReady ? <button className="approve-btn" onClick={() => onOpenChanges(resolveTask.id)}>🔀 Review resolution</button>
-            : <button className="dispatch" onClick={() => onResolve(repo, pr, model)} title="Have AI merge the base branch in and resolve the conflicts">🤖 Resolve conflicts</button>
+            : <button className="dispatch" disabled={dispatching} onClick={() => fire(() => onResolve(repo, pr, model))} title="Have AI merge the base branch in and resolve the conflicts">🤖 Resolve conflicts</button>
           )}
           {conflicting && isFork && <span className="status" title="Fork PRs can't be auto-resolved — no push access to the fork's branch">⚠ fork — resolve manually</span>}
           {reviewing && <span className="status status-reviewing">reviewing…</span>}
@@ -129,9 +131,9 @@ export default function PrDetail({ repo, pr, task, fixTask, resolveTask, tasks =
                 <option value="sonnet">Sonnet</option>
                 <option value="haiku">Haiku</option>
               </select>
-              <button className="dispatch" onClick={() => onReview(repo, pr, model)}>🤖 {reviewed ? 'Re-review' : 'AI Review'}</button>
+              <button className="dispatch" disabled={dispatching} onClick={() => fire(() => onReview(repo, pr, model))}>🤖 {reviewed ? 'Re-review' : 'AI Review'}</button>
               {ci === 'failure' && (
-                <button className="dispatch" disabled={fixActive} onClick={() => onFixCi(repo, pr, model)}
+                <button className="dispatch" disabled={fixActive || dispatching} onClick={() => fire(() => onFixCi(repo, pr, model))}
                   title="Dispatch an agent to read the failing CI logs and push a fix to this PR">
                   🛠 {fixActive ? 'Fixing CI…' : fixReady ? 'Fix ready ↗' : 'Fix CI'}
                 </button>
