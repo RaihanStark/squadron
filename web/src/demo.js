@@ -71,11 +71,14 @@ export const tasks = [
     events: [
       { kind: 'status', text: 'Plan approved — starting execution…' },
       { kind: 'status', text: 'executing · claude-sonnet-4-6' },
-      { kind: 'tool', text: '📖 read src/export.js' },
+      { kind: 'tool', text: '🤝 scout: find the export serializer and its tests' },
+      { kind: 'tool', sub: 'scout', text: '🔍 grep "export"' },
+      { kind: 'tool', sub: 'scout', text: '📖 read src/export.js' },
+      { kind: 'tool', sub: 'scout', text: '🔍 glob **/*.test.js' },
       { kind: 'tool', text: '✏️  edit src/export.js' },
       { kind: 'tool', text: '📝 write src/export.csv.test.js' },
       { kind: 'tool', text: '$ npm test -- export' },
-      { kind: 'text', text: 'Added a toCSV() serializer and wired it to the `export --format csv` flag. Writing a test for the rounding of partial hours.' },
+      { kind: 'text', text: 'Sent a scout to map the export path on a cheaper model, then added a toCSV() serializer wired to the `export --format csv` flag. Writing a test for the rounding of partial hours.' },
     ],
   },
   {
