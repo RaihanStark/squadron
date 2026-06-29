@@ -264,6 +264,16 @@ app.get('/api/tasks/:id/preview', handle((req) => preview.getState(req.params.id
 app.post('/api/tasks/:id/preview', handle((req) => preview.start(req.params.id)))
 app.delete('/api/tasks/:id/preview', handle((req) => preview.stop(req.params.id)))
 
+// Live preview for an open PR — check out its head and run the dev server, so the
+// PR can be exercised in the browser before merging. Same-repo PRs only (startPr
+// rejects forks). Mirrors the task preview routes above.
+app.get('/api/repos/:owner/:repo/pulls/:number/preview', handle((req) =>
+  preview.getStatePr(req.params.owner, req.params.repo, req.params.number)))
+app.post('/api/repos/:owner/:repo/pulls/:number/preview', handle((req) =>
+  preview.startPr(req.params.owner, req.params.repo, req.params.number)))
+app.delete('/api/repos/:owner/:repo/pulls/:number/preview', handle((req) =>
+  preview.stopPr(req.params.owner, req.params.repo, req.params.number)))
+
 // Per-repo run command (override the auto-detected one).
 app.get('/api/repos/:owner/:repo/run-command', handle(async (req) =>
   ({ command: await runConfig.getCmd(`${req.params.owner}/${req.params.repo}`) })))

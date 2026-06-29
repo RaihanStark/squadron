@@ -4,6 +4,7 @@ import { parseDiff, filePath } from '../diff.js'
 import { ciState, ciChecks, CI_LABEL, CI_CHECK_SYMBOL } from '../ci.js'
 import DiffFile from './DiffFile.jsx'
 import PrFixPanel from './PrFixPanel.jsx'
+import PreviewDock from './PreviewDock.jsx'
 
 export default function PrDetail({ repo, pr, task, fixTask, resolveTask, tasks = [], onReview, onFixCi, onResolve, onStartFix, onOpenChanges, onBack }) {
   const [owner, name] = repo.nameWithOwner.split('/')
@@ -172,6 +173,19 @@ export default function PrDetail({ repo, pr, task, fixTask, resolveTask, tasks =
             onOpenChanges={onOpenChanges} onClose={() => setFixOpen(false)} />
         )}
       </div>
+
+      {/* Run the PR's dev server to exercise it before merging. Fork PRs can't be
+          previewed (their branch isn't ours to run), so show a note instead. */}
+      {isFork ? (
+        <div className="ide-dock">
+          <div className="dock-bar">
+            <span className="dock-title">▸ Preview &amp; Logs</span>
+            <span className="muted">Fork PRs can't be previewed</span>
+          </div>
+        </div>
+      ) : (
+        <PreviewDock previewPath={`/api/repos/${owner}/${name}/pulls/${pr.number}`} repoSlug={repo.nameWithOwner} />
+      )}
     </>
   )
 }

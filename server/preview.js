@@ -8,8 +8,9 @@ import { existsSync, readFileSync, readdirSync } from 'node:fs'
 import net from 'node:net'
 import os from 'node:os'
 import path from 'node:path'
-import { worktreePathFor } from './git.js'
+import { worktreePathFor, ensurePrPreviewWorktree, prPreviewId } from './git.js'
 import { getTask } from './tasks.js'
+import * as gh from './github.js'
 import * as runConfig from './runConfig.js'
 
 // An OS-assigned free port.
@@ -56,12 +57,10 @@ function autodetect(wt) {
   return null
 }
 
-// Resolve the command: explicit per-repo override → .squadron.json → detection.
-export async function resolveCommand(taskId) {
-  const t = await getTask(taskId)
-  if (!t) return null
-  const wt = worktreePathFor(taskId)
-  const override = await runConfig.getCmd(`${t.owner}/${t.repo}`)
+// Resolve the command from a worktree + "owner/name" repo slug: explicit per-repo
+// override → .squadron.json → detection.
+export async function resolveCommandFor({ wt, repoSlug }) {
+  const override = repoSlug ? await runConfig.getCmd(repoSlug) : null
   if (override) return { command: override, source: 'configured' }
   try {
     const j = JSON.parse(readFileSync(path.join(wt, '.squadron.json'), 'utf8'))
@@ -71,11 +70,27 @@ export async function resolveCommand(taskId) {
   return auto ? { command: auto, source: 'detected' } : null
 }
 
-export async function getState(taskId) {
-  const p = previews.get(taskId)
-  if (p) return { status: p.status, url: p.url, logs: p.logs, command: p.command, source: p.source }
-  const r = await resolveCommand(taskId).catch(() => null)
+// Task-scoped wrapper: resolve the worktree + repo slug from the task.
+export async function resolveCommand(taskId) {
+  const t = await getTask(taskId)
+  if (!t) return null
+  return resolveCommandFor({ wt: worktreePathFor(taskId), repoSlug: `${t.owner}/${t.repo}` })
+}
+
+const snapshot = (p) => ({ status: p.status, url: p.url, logs: p.logs, command: p.command, source: p.source })
+
+// Current preview state for a context — the live process if one exists, else a
+// "stopped" stub carrying the command we'd run.
+async function stateFor({ id, wt, repoSlug }) {
+  const p = previews.get(id)
+  if (p) return snapshot(p)
+  const r = await resolveCommandFor({ wt, repoSlug }).catch(() => null)
   return { status: 'stopped', url: null, logs: [], command: r?.command || null, source: r?.source || null }
+}
+
+export async function getState(taskId) {
+  const t = await getTask(taskId)
+  return stateFor({ id: taskId, wt: worktreePathFor(taskId), repoSlug: t ? `${t.owner}/${t.repo}` : '' })
 }
 
 function runInstall(taskId, dir) {
@@ -133,20 +148,21 @@ async function ensureDeps(taskId, wt) {
   }
 }
 
-export async function start(taskId) {
-  if (previews.get(taskId)?.proc) return getState(taskId)
-  const wt = worktreePathFor(taskId)
+// Launch a preview process for an arbitrary context { id, wt, repoSlug }. One
+// process per id; the `previews` Map is keyed by id (a taskId or a PR-preview id).
+async function launch({ id, wt, repoSlug }) {
+  if (previews.get(id)?.proc) return stateFor({ id, wt, repoSlug })
   if (!existsSync(wt)) throw new Error('worktree no longer exists')
-  const resolved = await resolveCommand(taskId)
+  const resolved = await resolveCommandFor({ wt, repoSlug })
   if (!resolved) throw new Error('No run command found — set one for this repo (e.g. "go run .", "npm run dev").')
 
   const p = { status: 'preparing', url: null, logs: [], proc: null, command: resolved.command, source: resolved.source }
-  previews.set(taskId, p)
+  previews.set(id, p)
 
   ;(async () => {
     // npm-based command on a fresh worktree → install root + sub-package deps.
     if (/\bnpm\b/.test(resolved.command) && existsSync(path.join(wt, 'package.json'))) {
-      await ensureDeps(taskId, wt)
+      await ensureDeps(id, wt)
     }
     // Run in an ISOLATED environment so a previewed app (notably Squadron
     // itself) doesn't collide with the real instance — its own free ports and
@@ -159,16 +175,16 @@ export async function start(taskId) {
       PORT: String(apiPort),                                   // backend (PORT convention)
       VITE_PORT: String(webPort),                              // frontend dev server
       VITE_API_TARGET: `http://localhost:${apiPort}`,          // proxy → this preview's backend
-      SQUADRON_DATA_DIR: path.join(os.tmpdir(), `squadron-preview-${taskId}`), // isolated ~/.squadron
+      SQUADRON_DATA_DIR: path.join(os.tmpdir(), `squadron-preview-${id}`), // isolated ~/.squadron
     }
     p.status = 'starting'
-    log(taskId, `$ ${resolved.command}   (isolated · ports ${webPort}/${apiPort})`)
+    log(id, `$ ${resolved.command}   (isolated · ports ${webPort}/${apiPort})`)
     const proc = spawn('sh', ['-c', resolved.command], { cwd: wt, detached: true, env })
     p.proc = proc
     const onData = (d) => {
       for (const line of d.toString().split('\n')) {
         if (!line.trim()) continue
-        log(taskId, line)
+        log(id, line)
         const m = line.match(/https?:\/\/(?:localhost|127\.0\.0\.1|0\.0\.0\.0):\d+\S*/)
         if (m) {
           const url = m[0].replace('0.0.0.0', 'localhost')
@@ -179,20 +195,53 @@ export async function start(taskId) {
     }
     proc.stdout.on('data', onData)
     proc.stderr.on('data', onData)
-    proc.on('error', (e) => { p.status = 'error'; log(taskId, 'failed to start: ' + e.message) })
-    proc.on('exit', (code) => { p.proc = null; if (p.status !== 'stopped') p.status = 'exited'; log(taskId, `— process exited (code ${code}) —`) })
+    proc.on('error', (e) => { p.status = 'error'; log(id, 'failed to start: ' + e.message) })
+    proc.on('exit', (code) => { p.proc = null; if (p.status !== 'stopped') p.status = 'exited'; log(id, `— process exited (code ${code}) —`) })
     // No URL after a moment? It's a CLI/GUI run — mark it running anyway.
     setTimeout(() => { if (p.proc && p.status === 'starting') p.status = 'running' }, 4000)
-  })().catch((e) => { p.status = 'error'; log(taskId, e.message) })
+  })().catch((e) => { p.status = 'error'; log(id, e.message) })
 
-  return getState(taskId)
+  return stateFor({ id, wt, repoSlug })
 }
 
-export function stop(taskId) {
-  const p = previews.get(taskId)
+// Kill a preview process (if any) and mark it stopped. Generic over the id.
+function kill(id) {
+  const p = previews.get(id)
   if (p?.proc) {
     try { process.kill(-p.proc.pid, 'SIGTERM') } catch { try { p.proc.kill('SIGTERM') } catch { /* gone */ } }
   }
   if (p) { p.status = 'stopped'; p.proc = null }
+}
+
+export async function start(taskId) {
+  const t = await getTask(taskId)
+  return launch({ id: taskId, wt: worktreePathFor(taskId), repoSlug: t ? `${t.owner}/${t.repo}` : '' })
+}
+
+export async function stop(taskId) {
+  kill(taskId)
   return getState(taskId)
+}
+
+// --- PR live preview ---
+//
+// Run the dev server for an open PR straight from the PR view. Keyed by a stable
+// PR-preview id with its own detached worktree (kept warm across restarts), so
+// it's independent of any task lifecycle. Same-repo PRs only — a fork PR's branch
+// isn't ours to run.
+export async function getStatePr(owner, repo, number) {
+  const id = prPreviewId(owner, repo, number)
+  return stateFor({ id, wt: worktreePathFor(id), repoSlug: `${owner}/${repo}` })
+}
+
+export async function startPr(owner, repo, number) {
+  const pr = await gh.getPr(owner, repo, number)
+  if (pr.isCrossRepository) throw new Error("Can't preview a fork PR — its branch isn't ours to run.")
+  const wt = await ensurePrPreviewWorktree(owner, repo, number)
+  return launch({ id: prPreviewId(owner, repo, number), wt, repoSlug: `${owner}/${repo}` })
+}
+
+export async function stopPr(owner, repo, number) {
+  kill(prPreviewId(owner, repo, number))
+  return getStatePr(owner, repo, number)
 }
