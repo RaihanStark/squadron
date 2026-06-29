@@ -5,6 +5,7 @@ import path from 'node:path'
 import net from 'node:net'
 import { fileURLToPath } from 'node:url'
 import { fixPath } from './fixPath.js'
+import { initAutoUpdater } from './updater.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 
@@ -62,7 +63,9 @@ app.whenReady().then(async () => {
     app.quit()
     return
   }
-  createWindow(port)
+  const win = createWindow(port)
+  // Check GitHub Releases for a newer build and update in the background.
+  initAutoUpdater(win)
   app.on('activate', () => { if (BrowserWindow.getAllWindows().length === 0) createWindow(port) })
 })
 
